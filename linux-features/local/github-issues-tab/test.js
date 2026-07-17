@@ -23,7 +23,13 @@ const {
   applyMainBridgePatch,
   mainBridgeSource,
 } = require("./bridge-source.js");
-const { descriptors, patchPreloadBridgeAssets, optionalDriftStatus } = require("./patch.js");
+const {
+  descriptors,
+  patchPreloadBridgeAssets,
+  optionalDriftStatus,
+  patchIssuesRouteAssets,
+  patchIssuesNavigationAssets,
+} = require("./patch.js");
 
 const preloadDescriptor = descriptors.find((descriptor) => descriptor.id === "github-issues-preload-bridge");
 const mainDescriptor = descriptors.find((descriptor) => descriptor.id === "github-issues-main-bridge");
@@ -177,6 +183,104 @@ test("preload descriptor scans only .vite/build JavaScript and reports optional 
   assert.equal(preloadDescriptor?.phase, "extracted-app:post-webview");
   assert.equal(preloadDescriptor?.ciPolicy, "optional");
   assert.equal(typeof preloadDescriptor?.apply, "function");
+});
+
+function writeIssueAssetFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "github-issues-route-"));
+  const assetsDir = path.join(root, "webview", "assets");
+  fs.mkdirSync(assetsDir, { recursive: true });
+  fs.writeFileSync(path.join(assetsDir, "circle-dot-current.js"), "export{icon as default};", "utf8");
+  fs.writeFileSync(path.join(assetsDir, "circle-dot-dashed-current.js"), "export{icon as default};", "utf8");
+  fs.writeFileSync(path.join(assetsDir, "route.js"), [
+    "const React={lazy:fn=>fn};const components={Button:null};const Markdown=null;const openExternal=()=>{};",
+    "const PullRequestsRoute=React.lazy(()=>import(`./pull-request-route.js`));",
+    "const routes=(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(oa,{path:`/pull-requests`,element:(0,Q.jsx)(PullRequestsRoute,{})}),(0,Q.jsx)(oa,{path:`/library`,element:(0,Q.jsx)(AJ,{})})]});",
+    "const nav=(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})});",
+  ].join(""), "utf8");
+  fs.writeFileSync(path.join(assetsDir, "shared.js"), [
+    "const React={lazy:fn=>fn};const components={Button:null};const Markdown=()=>null;const openExternal=()=>{};",
+    "function renderPullRequest(e){return Markdown(e.body)};function openPullRequest(e){return openExternal({href:e.url})};",
+  ].join(""), "utf8");
+  return { root, assetsDir };
+}
+
+test("Issues route patch is transactional, idempotent, and wires captured dependencies", () => {
+  const fixture = writeIssueAssetFixture();
+  try {
+    assert.equal(descriptors.length, 4);
+    assert.equal(descriptors.filter((descriptor) => descriptor.phase === "extracted-app:post-webview").length, 3);
+    assert.equal(descriptors.some((descriptor) => descriptor.id === "github-issues-renderer-route"), true);
+    assert.equal(descriptors.some((descriptor) => descriptor.id === "github-issues-navigation"), true);
+    const before = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
+    const first = patchIssuesRouteAssets(fixture.root);
+    assert.equal(first.matched, true);
+    assert.equal(first.changed, 2);
+    const route = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
+    const shared = fs.readFileSync(path.join(fixture.assetsDir, "shared.js"), "utf8");
+    assert.equal((route.match(/\/issues/g) ?? []).length, 1);
+    assert.match(route, /import\(`\/github-issues-tab\.mjs`\)/);
+    assert.match(route, /m\.createIssuesRoute\(\{React,components,Markdown,openExternal\}\)/);
+    assert.doesNotMatch(route, /children:\[const codexLinuxGithubIssuesRouteMarker/);
+    assert.match(shared, /codexLinuxGithubIssuesDependencies/);
+    const navigation = patchIssuesNavigationAssets(fixture.root);
+    assert.equal(navigation.matched, true);
+    assert.equal(navigation.changed, 1);
+    const nav = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
+    assert.match(nav, /sidebarElectron\.issuesRouteNavLink/);
+    assert.match(nav, /defaultMessage:`Issues`/);
+    assert.match(nav, /circle-dot-current\.js/);
+    const after = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
+    const second = patchIssuesRouteAssets(fixture.root);
+    const secondNavigation = patchIssuesNavigationAssets(fixture.root);
+    assert.deepEqual(second, { matched: true, changed: 0 });
+    assert.deepEqual(secondNavigation, { matched: true, changed: 0 });
+    assert.deepEqual(Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")])), after);
+    assert.notDeepEqual(before, after);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Issues route and navigation patches leave all files unchanged on deliberate drift", () => {
+  for (const drift of ["route", "nav", "shared"]) {
+    const fixture = writeIssueAssetFixture();
+    try {
+      const driftPath = path.join(fixture.assetsDir, drift === "route" ? "route.js" : drift === "shared" ? "shared.js" : "route.js");
+      const source = fs.readFileSync(driftPath, "utf8");
+      fs.writeFileSync(driftPath, drift === "route" ? source.replace("PullRequestsRoute", "PullRequestRoute") : drift === "shared" ? source.replace("openExternal", "externalLink") : source.replace("sidebarElectron.pullRequestsRouteNavLink", "sidebarElectron.pullRequestsNavLink"), "utf8");
+      const before = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
+      const result = drift === "nav" ? patchIssuesNavigationAssets(fixture.root) : patchIssuesRouteAssets(fixture.root);
+      assert.equal(result.matched, false);
+      assert.equal(result.changed, 0);
+      assert.deepEqual(Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")])), before);
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  }
+  const ambiguous = writeIssueAssetFixture();
+  try {
+    fs.copyFileSync(path.join(ambiguous.assetsDir, "route.js"), path.join(ambiguous.assetsDir, "route-copy.js"));
+    const before = Object.fromEntries(fs.readdirSync(ambiguous.assetsDir).map((name) => [name, fs.readFileSync(path.join(ambiguous.assetsDir, name), "utf8")]));
+    const result = patchIssuesRouteAssets(ambiguous.root);
+    assert.equal(result.matched, false);
+    assert.equal(result.changed, 0);
+    assert.deepEqual(Object.fromEntries(fs.readdirSync(ambiguous.assetsDir).map((name) => [name, fs.readFileSync(path.join(ambiguous.assetsDir, name), "utf8")])), before);
+  } finally {
+    fs.rmSync(ambiguous.root, { recursive: true, force: true });
+  }
+});
+
+test("Issues navigation refuses to attach without an applied route marker", () => {
+  const fixture = writeIssueAssetFixture();
+  try {
+    const before = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
+    const result = patchIssuesNavigationAssets(fixture.root);
+    assert.equal(result.matched, false);
+    assert.equal(result.changed, 0);
+    assert.equal(fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8"), before);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
 });
 
 function createBridgeVm(spawn) {

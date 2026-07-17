@@ -524,6 +524,20 @@ test("reducer models loading, partial, populated, and typed error transitions", 
   assert.equal(state.list.error.code, "offline");
 });
 
+test("detail timeline-only warnings preserve the issue and mark timeline partial", async () => {
+  const { initialIssuesState, issuesReducer } = await renderer();
+  let state = initialIssuesState();
+  state = issuesReducer(state, { type: "select", issueId: "I_1", requestId: "detail-1" });
+  state = issuesReducer(state, {
+    type: "detail-success",
+    requestId: "detail-1",
+    data: { issue: { id: "I_1" }, timeline: { items: [], warnings: [{ type: "FIELD_ERROR" }] } },
+  });
+  assert.equal(state.detail.status, "ready");
+  assert.equal(state.timeline.status, "partial");
+  assert.equal(state.timeline.warnings.length, 1);
+});
+
 test("host changes invalidate prior data and refresh preserves selection when present", async () => {
   const { initialIssuesState, issuesReducer } = await renderer();
   let state = initialIssuesState();
@@ -630,7 +644,7 @@ test("safe external links route primary and middle activation through openExtern
 
 test("renderer source includes debounce and identity-safe pending cleanup", () => {
   const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
-  assert.match(source, /setTimeout\([^\n]*250/);
+  assert.match(source, /setTimeout\([\s\S]*250/);
   assert.match(source, /clearTimeout/);
   assert.match(source, /pending\.current\[slot\]\s*===\s*requestId/);
   assert.match(source, /pending\.current\.detail\s*===\s*requestId/);
@@ -642,4 +656,35 @@ test("renderer includes detail partial/rate-limit context and safe host-derived 
     assert.match(source, new RegExp(marker.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
   }
   assert.doesNotMatch(source, /href\s*:/);
+});
+
+test("review follow-up preserves rate-limit cost, row structure, cancellation breadth, and Markdown children", () => {
+  const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
+  assert.match(source, /rateLimit\.cost/);
+  assert.match(source, /parts\.push\(`cost \$\{rateLimit\.cost\}/);
+  assert.match(source, /function ListRow[\s\S]*?role: "group"[\s\S]*?repoLink/);
+  assert.match(source, /function ListRow[\s\S]*?node\(React, "button"[\s\S]*?onClick: onSelect/);
+  assert.match(source, /node\(React, "button"[\s\S]*?\),\s*node\(React, "div"[\s\S]*?authorUrl/);
+  assert.match(source, /cancelPending\("list"\)[\s\S]*?cancelPending\("detail"\)[\s\S]*?cancelPending\("timeline"\)/);
+  assert.match(source, /mounted\.current[\s\S]*?Promise\.resolve\(\)\.then\(\(\) => \{[\s\S]*?request\(/);
+  assert.match(source, /children: issue\.body/);
+  assert.match(source, /children: item\.body/);
+  assert.match(source, /bridgeResponseStatus\(response, requestId\)/);
+  assert.match(source, /status !== "current"[\s\S]*?invalid-response/);
+  assert.match(source, /label\?\.color/);
+  assert.match(source, /label\?\.description/);
+  assert.match(source, /item\.target\.message/);
+  assert.match(source, /timelineWarnings\.length > 0 \? "partial"/);
+  assert.match(source, /listDebounce\.current/);
+  assert.match(source, /Promise\.resolve\(request\?\.\([\s\S]*?\.catch\(\(\) => \{\}\)/);
+  assert.match(source, /active authenticated host/);
+});
+
+test("renderer distinguishes stale responses from malformed current envelopes", async () => {
+  const { bridgeResponseStatus } = await renderer();
+  assert.equal(bridgeResponseStatus({ requestId: "current", ok: true }, "current"), "current");
+  assert.equal(bridgeResponseStatus({ requestId: "old", ok: false }, "current"), "stale");
+  assert.equal(bridgeResponseStatus({ requestId: "current" }, "current"), "invalid");
+  assert.equal(bridgeResponseStatus({ requestId: "old" }, "current"), "invalid");
+  assert.equal(bridgeResponseStatus(null, "current"), "invalid");
 });

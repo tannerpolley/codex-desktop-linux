@@ -218,15 +218,16 @@ export function issuesReducer(state, action) {
       if (!isCurrent(state.detail, action.requestId)) return state;
       const data = action.data ?? {};
       const timeline = data.timeline ?? {};
+      const timelineWarnings = [...warningsValue(data.warnings), ...warningsValue(timeline.warnings)];
       return {
         ...state,
         detail: { ...state.detail, status: statusFor(data), error: null, warnings: warningsValue(data.warnings), issue: data.issue ?? null, rateLimit: data.rateLimit ?? null },
         timeline: {
           ...state.timeline,
           requestId: state.timeline.requestId,
-          status: statusFor(data, "ready"),
+          status: timelineWarnings.length > 0 ? "partial" : "ready",
           error: null,
-          warnings: warningsValue([...(data.warnings ?? []), ...(timeline.warnings ?? [])]),
+          warnings: warningsValue(timelineWarnings),
           items: mergeTimeline([], timeline.items),
           pageInfo: timeline.pageInfo ?? pageState(),
           rateLimit: data.rateLimit ?? null,
@@ -364,22 +365,66 @@ function commitUrl(host, repository, oid) {
 }
 
 function rateLimitText(rateLimit) {
-  if (!rateLimit || (rateLimit.remaining == null && !rateLimit.resetAt)) return null;
-  return `Rate limit: ${display(rateLimit.remaining, "unknown")} remaining${rateLimit.resetAt ? ` · resets ${rateLimit.resetAt}` : ""}`;
+  if (!rateLimit || (rateLimit.cost == null && rateLimit.remaining == null && !rateLimit.resetAt)) return null;
+  const parts = [];
+  if (rateLimit.cost != null) parts.push(`cost ${rateLimit.cost}`);
+  if (rateLimit.remaining != null) parts.push(`${rateLimit.remaining} remaining`);
+  if (rateLimit.resetAt) parts.push(`resets ${rateLimit.resetAt}`);
+  return `Rate limit: ${parts.join(" · ")}`;
 }
 
-function eventText(item) {
+export function bridgeResponseStatus(response, requestId) {
+  if (!response || typeof response !== "object" || Array.isArray(response)) return "invalid";
+  if (typeof response.requestId !== "string" || typeof response.ok !== "boolean") return "invalid";
+  if (response.requestId !== requestId) return "stale";
+  return "current";
+}
+
+function labelColor(value) {
+  return typeof value === "string" && /^[A-Fa-f0-9]{6}$/u.test(value) ? `#${value}` : null;
+}
+
+function labelNodes(React, labels) {
+  return (Array.isArray(labels) ? labels : []).map((label, index) => node(React, "span", {
+    key: `${label?.name || "label"}-${index}`,
+    title: label?.description || undefined,
+    style: {
+      display: "inline-block",
+      border: `1px solid ${labelColor(label?.color) || "var(--color-token-border-light, currentColor)"}`,
+      borderRadius: "999px",
+      padding: "1px 6px",
+      marginRight: "4px",
+    },
+  }, display(label?.name)));
+}
+
+function milestoneText(milestone) {
+  if (!milestone?.title) return null;
+  const details = [
+    milestone.number != null ? `#${milestone.number}` : null,
+    milestone.state,
+    milestone.dueOn ? `due ${milestone.dueOn}` : null,
+  ].filter(Boolean);
+  return `Milestone: ${milestone.title}${details.length ? ` (${details.join(" · ")})` : ""}`;
+}
+
+function timelineEventText(React, item, host, openExternal) {
   const actor = item.actor?.login || "Someone";
+  const actorUrl = userUrl(host, item.actor?.login);
+  const actorNode = actorUrl ? Link({ React, url: actorUrl, openExternal, label: "Open event actor profile" }, actor) : actor;
+  const assignee = item.assignee?.login || "a user";
+  const assigneeUrl = userUrl(host, item.assignee?.login);
+  const assigneeNode = assigneeUrl ? Link({ React, url: assigneeUrl, openExternal, label: "Open assignee profile" }, assignee) : assignee;
   switch (item?.kind) {
-    case "comment": return `${actor} left a note`;
-    case "label": return `${actor} ${item.action === "labeled" ? "added" : "removed"} label ${item.label?.name || "(unknown)"}`;
-    case "assignment": return `${actor} ${item.action === "assigned" ? "assigned" : "unassigned"} ${item.assignee?.login || "a user"}`;
-    case "milestone": return `${actor} ${item.action === "milestoned" ? "added" : "removed"} milestone ${item.milestone?.title || "(unknown)"}`;
-    case "state": return `${actor} marked the issue ${item.state || "updated"}${item.reason ? ` (${item.reason})` : ""}`;
-    case "rename": return `${actor} changed the title${item.previousTitle || item.currentTitle ? `: ${display(item.previousTitle)} → ${display(item.currentTitle)}` : ""}`;
-    case "reference": return `${actor} referenced ${item.target?.oid ? `commit ${item.target.oid}` : "related work"}`;
-    case "transfer": return `${actor} transferred this issue${item.fromRepository || item.toRepository ? `: ${display(item.fromRepository)} → ${display(item.toRepository)}` : ""}`;
-    default: return `${item?.type || "Timeline event"} · ${display(item?.createdAt)}`;
+    case "comment": return [actorNode, " left a note"];
+    case "label": return [actorNode, ` ${item.action === "labeled" ? "added" : "removed"} label ${item.label?.name || "(unknown)"}`];
+    case "assignment": return [actorNode, ` ${item.action === "assigned" ? "assigned" : "unassigned"} `, assigneeNode];
+    case "milestone": return [actorNode, ` ${item.action === "milestoned" ? "added" : "removed"} milestone ${item.milestone?.title || "(unknown)"}`];
+    case "state": return [actorNode, ` marked the issue ${item.state || "updated"}${item.reason ? ` (${item.reason})` : ""}`];
+    case "rename": return [actorNode, ` changed the title${item.previousTitle || item.currentTitle ? `: ${display(item.previousTitle)} → ${display(item.currentTitle)}` : ""}`];
+    case "reference": return [actorNode, ` referenced ${item.target?.oid ? `commit ${item.target.oid}` : "related work"}`];
+    case "transfer": return [actorNode, ` transferred this issue${item.fromRepository || item.toRepository ? `: ${display(item.fromRepository)} → ${display(item.toRepository)}` : ""}`];
+    default: return [actorNode, ` · ${item?.type || "Timeline event"} · ${display(item?.createdAt)}`];
   }
 }
 
@@ -450,40 +495,47 @@ function Button({ React, components, label, onClick, pressed = false, disabled =
 function ListRow({ React, issue, selected, onSelect, host, openExternal }) {
   const labels = Array.isArray(issue.labels) ? issue.labels : [];
   const repoLink = repositoryUrl(host, issue.repository);
+  const authorUrl = userUrl(host, issue.author);
   return node(React, "div", {
-    role: "button",
-    tabIndex: 0,
-    onClick: onSelect,
-    onKeyDown: (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(); }
-    },
-    "aria-pressed": selected,
-    "aria-label": `${display(issue.repository)} Issue ${display(issue.number)} ${display(issue.title)}`,
+    role: "group",
     style: {
-      display: "block", width: "100%", textAlign: "left", padding: "12px 14px", border: 0,
+      display: "block", width: "100%", padding: "12px 14px",
       borderBottom: "1px solid var(--color-token-border-light, currentColor)", background: selected ? "var(--color-token-bg-secondary, transparent)" : "transparent",
-      color: "var(--color-token-text-primary, currentColor)", cursor: "pointer",
+      color: "var(--color-token-text-primary, currentColor)",
     },
   },
   node(React, "div", { style: { fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } },
     repoLink ? Link({ React, url: repoLink, openExternal, label: "Open repository" }, display(issue.repository)) : display(issue.repository),
     ` · #${display(issue.number)}`,
   ),
-  node(React, "div", { style: { marginTop: "4px", fontSize: "14px", fontWeight: 600 } }, display(issue.title)),
+  node(React, "button", {
+    type: "button",
+    onClick: onSelect,
+    "aria-pressed": selected,
+    "aria-label": `${display(issue.repository)} Issue ${display(issue.number)} ${display(issue.title)}`,
+    style: {
+      display: "block", width: "100%", textAlign: "left", marginTop: "6px", padding: 0, border: 0,
+      background: "transparent", color: "inherit", cursor: "pointer",
+    },
+  },
+    node(React, "div", { style: { fontSize: "14px", fontWeight: 600 } }, display(issue.title)),
+  ),
   node(React, "div", { style: { display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "6px", fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } },
-    `${display(issue.state).toLowerCase()} · ${display(issue.author, "unknown author")} · ${display(issue.commentCount, "0")} notes · ${formatRelative(issue.updatedAt)}`,
-    labels.length > 0 ? ` · ${labels.map((label) => label.name).join(", ")}` : null,
+    `${display(issue.state).toLowerCase()} · `,
+    authorUrl ? Link({ React, url: authorUrl, openExternal, label: "Open author profile" }, display(issue.author)) : display(issue.author, "unknown author"),
+    ` · ${display(issue.commentCount, "0")} notes · ${formatRelative(issue.updatedAt)}`,
+    labels.length > 0 ? node(React, "span", null, " · ", ...labelNodes(React, labels)) : null,
     issue.assignees?.length > 0 ? ` · ${issue.assignees.join(", ")}` : null,
   ));
 }
 
 function TimelineEvent({ React, item, Markdown, openExternal, host }) {
-  const text = eventText(item);
   const targetUrl = item?.target?.url || commitUrl(host, item?.target?.repository, item?.target?.oid);
   const fromUrl = repositoryUrl(host, item?.fromRepository);
   const toUrl = repositoryUrl(host, item?.toRepository);
+  const commitMessage = item?.kind === "reference" && typeof item.target?.message === "string" ? item.target.message.split("\n", 1)[0] : null;
   return node(React, "article", { style: { padding: "12px 0", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
-    node(React, "div", { style: { fontSize: "13px" } }, text),
+    node(React, "div", { style: { fontSize: "13px" } }, ...timelineEventText(React, item, host, openExternal)),
     node(React, "div", { style: { marginTop: "4px", fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } }, display(item?.createdAt)),
     item?.kind === "transfer" && (fromUrl || toUrl)
       ? node(React, "div", { style: { marginTop: "4px" } },
@@ -493,9 +545,12 @@ function TimelineEvent({ React, item, Markdown, openExternal, host }) {
       )
       : null,
     item?.kind === "comment" && item.body
-      ? node(React, "div", { style: { marginTop: "8px" } }, Markdown ? node(React, Markdown, { content: item.body, source: item.body, markdown: item.body }) : node(React, "div", { style: { whiteSpace: "pre-wrap" } }, item.body))
+      ? node(React, "div", { style: { marginTop: "8px" } }, Markdown ? node(React, Markdown, { content: item.body, source: item.body, markdown: item.body, children: item.body }) : node(React, "div", { style: { whiteSpace: "pre-wrap" } }, item.body))
       : item?.kind === "reference" && targetUrl
-        ? node(React, "div", { style: { marginTop: "4px" } }, Link({ React, url: targetUrl, openExternal, label: "Open related reference" }, display(item.target.title || item.target.repository || item.target.oid)))
+        ? node(React, "div", { style: { marginTop: "4px" } },
+          Link({ React, url: targetUrl, openExternal, label: "Open related reference" }, display(item.target.title || item.target.repository || item.target.oid)),
+          commitMessage ? node(React, "div", { style: { marginTop: "3px", color: "var(--color-token-text-secondary, currentColor)" } }, commitMessage) : null,
+        )
         : null,
   );
 }
@@ -503,7 +558,7 @@ function TimelineEvent({ React, item, Markdown, openExternal, host }) {
 function renderIssueBody(React, issue, Markdown) {
   if (!issue?.body) return node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "No issue body");
   return Markdown
-    ? node(React, Markdown, { content: issue.body, source: issue.body, markdown: issue.body })
+    ? node(React, Markdown, { content: issue.body, source: issue.body, markdown: issue.body, children: issue.body })
     : node(React, "div", { style: { whiteSpace: "pre-wrap" } }, issue.body);
 }
 
@@ -531,6 +586,7 @@ export function createIssuesRoute(deps = {}) {
   function IssuesRoute() {
     const [state, dispatch] = React.useReducer(issuesReducer, undefined, initialIssuesState);
     const pending = React.useRef(Object.create(null));
+    const listDebounce = React.useRef(null);
     const mounted = React.useRef(true);
     const renderButton = (props) => Button({ React, components, ...props });
 
@@ -538,7 +594,7 @@ export function createIssuesRoute(deps = {}) {
       if (!requestId) return;
       try {
         const request = bridge()?.request;
-        request?.({ version: 1, requestId: randomRequestId("cancel"), operation: "cancel", input: { targetRequestId: requestId } });
+        void Promise.resolve(request?.({ version: 1, requestId: randomRequestId("cancel"), operation: "cancel", input: { targetRequestId: requestId } })).catch(() => {});
       } catch {}
     }, []);
 
@@ -551,6 +607,8 @@ export function createIssuesRoute(deps = {}) {
 
     const changeFilter = React.useCallback((action) => {
       cancelPending("list");
+      cancelPending("detail");
+      cancelPending("timeline");
       dispatch(action);
     }, [cancelPending]);
 
@@ -566,10 +624,19 @@ export function createIssuesRoute(deps = {}) {
         dispatch({ type: errorType, requestId, error: { code: "adapter-failed", message: "GitHub Issues bridge is unavailable" } });
         return requestId;
       }
-      Promise.resolve().then(() => request({ version: 1, requestId, operation, input })).then((response) => {
-        if (!mounted.current) return;
-        if (response?.requestId !== requestId) return;
+      Promise.resolve().then(() => {
+        if (!mounted.current || pending.current[slot] !== requestId) return null;
+        return request({ version: 1, requestId, operation, input });
+      }).then((response) => {
+        const status = bridgeResponseStatus(response, requestId);
+        if (status === "stale" && pending.current[slot] !== requestId) return;
+        if (pending.current[slot] !== requestId) return;
         if (pending.current[slot] === requestId) delete pending.current[slot];
+        if (status !== "current") {
+          if (mounted.current) dispatch({ type: errorType, requestId, error: { code: "invalid-response", message: "GitHub Issues bridge returned an invalid response" }, ...extra });
+          return;
+        }
+        if (!mounted.current) return;
         if (response.ok) dispatch({ type: successType, requestId, data: response.data ?? {}, ...extra });
         else dispatch({ type: errorType, requestId, error: safeError(response.error), ...extra });
       }).catch((error) => {
@@ -579,8 +646,13 @@ export function createIssuesRoute(deps = {}) {
       return requestId;
     }, [cancel]);
 
+    // A null host intentionally asks the adapter to select GitHub CLI's active authenticated host.
     const loadCapabilities = React.useCallback((host = null) => send("capabilities", "capabilities", { host }, { type: "capabilities-start" }, "capabilities-success", "capabilities-error"), [send]);
     const loadList = React.useCallback((append = false) => {
+      if (listDebounce.current !== null) {
+        clearTimeout(listDebounce.current);
+        listDebounce.current = null;
+      }
       if (!state.host) return null;
       return send("list", "listIssues", {
         host: state.host,
@@ -605,9 +677,19 @@ export function createIssuesRoute(deps = {}) {
         dispatch({ type: "detail-error", requestId, error: { code: "adapter-failed", message: "GitHub Issues bridge is unavailable" } });
         return requestId;
       }
-      Promise.resolve().then(() => request({ version: 1, requestId, operation: "getIssue", input: { host: state.host, nodeId: issue.id } })).then((response) => {
-        if (mounted.current && response?.requestId === requestId) {
-          if (pending.current.detail === requestId) delete pending.current.detail;
+      Promise.resolve().then(() => {
+        if (!mounted.current || pending.current.detail !== requestId) return null;
+        return request({ version: 1, requestId, operation: "getIssue", input: { host: state.host, nodeId: issue.id } });
+      }).then((response) => {
+        const status = bridgeResponseStatus(response, requestId);
+        if (status === "stale" && pending.current.detail !== requestId) return;
+        if (pending.current.detail !== requestId) return;
+        delete pending.current.detail;
+        if (status !== "current") {
+          if (mounted.current) dispatch({ type: "detail-error", requestId, error: { code: "invalid-response", message: "GitHub Issues bridge returned an invalid response" } });
+          return;
+        }
+        if (mounted.current) {
           if (response.ok) dispatch({ type: "detail-success", requestId, data: response.data ?? {} });
           else dispatch({ type: "detail-error", requestId, error: safeError(response.error) });
         }
@@ -640,8 +722,15 @@ export function createIssuesRoute(deps = {}) {
     }, [state.host, cancelPending]);
     React.useEffect(() => {
       if (!state.host || state.capabilities.status === "loading") return undefined;
-      const timer = setTimeout(() => loadList(false), 250);
-      return () => clearTimeout(timer);
+      const timer = setTimeout(() => {
+        if (listDebounce.current === timer) listDebounce.current = null;
+        loadList(false);
+      }, 250);
+      listDebounce.current = timer;
+      return () => {
+        clearTimeout(timer);
+        if (listDebounce.current === timer) listDebounce.current = null;
+      };
     }, [loadList, state.host, state.view, state.stateFilter, state.repository, state.text, state.capabilities.status]);
 
     const style = { ...tokenStyles(), display: "flex", flexDirection: "column", minHeight: "420px", height: "100%", fontSize: "14px" };
@@ -704,9 +793,9 @@ export function createIssuesRoute(deps = {}) {
                 ` · created ${display(issue.createdAt)} · updated ${formatRelative(issue.updatedAt)}`,
               ),
               issue.stateReason ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Reason: ${issue.stateReason}`) : null,
-              issue.labels?.length ? node(React, "div", { style: { marginTop: "8px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, issue.labels.map((label) => label.name).join(", ")) : null,
+              issue.labels?.length ? node(React, "div", { style: { marginTop: "8px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, ...labelNodes(React, issue.labels)) : null,
               issue.assignees?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, issue.assignees.join(", ")) : null,
-              issue.milestone?.title ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Milestone: ${issue.milestone.title}`) : null,
+              issue.milestone?.title ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, milestoneText(issue.milestone)) : null,
               issue.projects?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Projects: ${issue.projects.map((project) => project.title || project.number).join(", ")}`) : null,
             ),
             state.detail.status === "partial" ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Some Issue fields were unavailable") : null,

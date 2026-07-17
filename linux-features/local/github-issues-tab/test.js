@@ -191,15 +191,16 @@ function writeIssueAssetFixture() {
   fs.mkdirSync(assetsDir, { recursive: true });
   fs.writeFileSync(path.join(assetsDir, "circle-dot-current.js"), "export{icon as default};", "utf8");
   fs.writeFileSync(path.join(assetsDir, "circle-dot-dashed-current.js"), "export{icon as default};", "utf8");
-  fs.writeFileSync(path.join(assetsDir, "route.js"), [
-    "const React={lazy:fn=>fn};const components={Button:null};const Markdown=null;const openExternal=()=>{};",
-    "const PullRequestsRoute=React.lazy(()=>import(`./pull-request-route.js`));",
-    "const routes=(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(oa,{path:`/pull-requests`,element:(0,Q.jsx)(PullRequestsRoute,{})}),(0,Q.jsx)(oa,{path:`/library`,element:(0,Q.jsx)(AJ,{})})]});",
-    "const nav=b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null;",
+  fs.writeFileSync(path.join(assetsDir, "pull-request-actions-current.js"), "const Markdown=({children})=>children;export{Markdown as l};//# sourceMappingURL=pull-request-actions-current.js.map", "utf8");
+  fs.writeFileSync(path.join(assetsDir, "pull-request-route-current.js"), [
+    "import{l as Ht}from\"./pull-request-actions-current.js\";",
+    "const render=e=>(0,In.jsx)(Ht,{allowBasicHtml:!0,children:e});export{render};",
   ].join(""), "utf8");
-  fs.writeFileSync(path.join(assetsDir, "shared.js"), [
-    "const React={lazy:fn=>fn};const components={Button:null};const Markdown=()=>null;const openExternal=()=>{};",
-    "function renderPullRequest(e){return Markdown(e.body)};function openPullRequest(e){return openExternal({href:e.url})};",
+  fs.writeFileSync(path.join(assetsDir, "route.js"), [
+    "const nw=fn=>fn;const FJ=t(U(),1);FJ.Suspense;const cY=nw(async()=>PullRequestsRoute);const PullRequestsRoute={};",
+    "const routes=(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(oa,{path:`/pull-requests`,element:(0,Q.jsx)(PullRequestsRoute,{})}),(0,Q.jsx)(oa,{path:`/library`,element:(0,Q.jsx)(AJ,{})})]});",
+    "const a=q(J),o=ln(),s=cl();const nav=b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{fE(a,o)},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null;",
+    "//# sourceMappingURL=route.js.map",
   ].join(""), "utf8");
   return { root, assetsDir };
 }
@@ -214,24 +215,27 @@ test("Issues route patch is transactional, idempotent, and wires captured depend
     const before = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
     const first = patchIssuesRouteAssets(fixture.root);
     assert.equal(first.matched, true);
-    assert.equal(first.changed, 2);
+    assert.equal(first.changed, 1);
     const route = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
-    const shared = fs.readFileSync(path.join(fixture.assetsDir, "shared.js"), "utf8");
     assert.equal((route.match(/\/issues/g) ?? []).length, 1);
-    assert.match(route, /import\(`\/github-issues-tab\.mjs`\)/);
-    assert.match(route, /m\.createIssuesRoute\(\{React,components,Markdown,openExternal\}\)/);
+    assert.match(route, /nw\(async\(\)=>\{const \[issuesModule,markdownModule\]=await Promise\.all\(\[import\(`\/github-issues-tab\.mjs`\),import\(`\.\/pull-request-actions-current\.js`\)\]\)/);
+    assert.match(route, /issuesModule\.createIssuesRoute\(\{React:FJ,components:\{\},Markdown:markdownModule\.l,openExternal\}\)/);
+    assert.doesNotMatch(route, /React\.lazy|globalThis\.codexLinuxGithubIssuesDependencies/);
+    assert.match(route, /sourceMappingURL=route\.js\.map/);
     assert.doesNotMatch(route, /children:\[const codexLinuxGithubIssuesRouteMarker/);
-    assert.match(shared, /codexLinuxGithubIssuesDependencies/);
+    assert.equal(fs.readFileSync(path.join(fixture.assetsDir, "pull-request-actions-current.js"), "utf8"), before["pull-request-actions-current.js"]);
     const navigation = patchIssuesNavigationAssets(fixture.root);
     assert.equal(navigation.matched, true);
     assert.equal(navigation.changed, 1);
     const nav = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
-    const originalPullRequestsNav = "b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null";
+    const originalPullRequestsNav = "b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{fE(a,o)},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null";
     assert.equal(nav.split(originalPullRequestsNav).length - 1, 1);
     assert.equal((nav.match(/sidebarElectron\.pullRequestsRouteNavLink/g) ?? []).length, 1);
     assert.equal((nav.match(/isActive:s\.pathname\.startsWith\(`\/pull-requests`\)/g) ?? []).length, 1);
     assert.equal((nav.match(/sidebarElectron\.issuesRouteNavLink/g) ?? []).length, 1);
     assert.equal((nav.match(/isActive:s\.pathname\.startsWith\(`\/issues`\)/g) ?? []).length, 1);
+    assert.equal((nav.match(/onClick:\(\)=>\{o\(`\/issues`\)\}/g) ?? []).length, 1);
+    assert.equal((nav.match(/onClick:\(\)=>\{fE\(a,o\)\}/g) ?? []).length, 1);
     assert.match(nav, /defaultMessage:`Issues`/);
     assert.match(nav, /circle-dot-current\.js/);
     const after = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
@@ -247,12 +251,12 @@ test("Issues route patch is transactional, idempotent, and wires captured depend
 });
 
 test("Issues route and navigation patches leave all files unchanged on deliberate drift", () => {
-  for (const drift of ["route", "nav", "shared"]) {
+  for (const drift of ["route", "nav", "dependency"]) {
     const fixture = writeIssueAssetFixture();
     try {
-      const driftPath = path.join(fixture.assetsDir, drift === "route" ? "route.js" : drift === "shared" ? "shared.js" : "route.js");
+      const driftPath = path.join(fixture.assetsDir, drift === "route" ? "route.js" : drift === "dependency" ? "pull-request-actions-current.js" : "route.js");
       const source = fs.readFileSync(driftPath, "utf8");
-      fs.writeFileSync(driftPath, drift === "route" ? source.replace("PullRequestsRoute", "PullRequestRoute") : drift === "shared" ? source.replace("openExternal", "externalLink") : source.replace("sidebarElectron.pullRequestsRouteNavLink", "sidebarElectron.pullRequestsNavLink"), "utf8");
+      fs.writeFileSync(driftPath, drift === "route" ? source.replace("PullRequestsRoute", "PullRequestRoute") : drift === "dependency" ? source.replaceAll("children", "body") : source.replace("sidebarElectron.pullRequestsRouteNavLink", "sidebarElectron.pullRequestsNavLink"), "utf8");
       const before = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
       const result = drift === "nav" ? patchIssuesNavigationAssets(fixture.root) : patchIssuesRouteAssets(fixture.root);
       assert.equal(result.matched, false);

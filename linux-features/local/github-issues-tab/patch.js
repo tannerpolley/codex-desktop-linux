@@ -66,7 +66,6 @@ function optionalDriftStatus(result, warnings) {
 }
 
 const ISSUES_ROUTE_MARKER = "codexLinuxGithubIssuesRouteMarker";
-const ISSUES_DEPENDENCY_MARKER = "codexLinuxGithubIssuesDependencies";
 const ISSUES_NAV_MARKER = "sidebarElectron.issuesRouteNavLink";
 
 function readWebviewAssets(extractedDir) {
@@ -99,39 +98,14 @@ function findOne(entries, predicate, description) {
   return { entry: matches[0] };
 }
 
-function captureSharedIdentifiers(source) {
-  const react = source.match(/\b(React)\b/)?.[1]
-    ?? source.match(/\b([A-Za-z_$][\w$]*)\.jsx\b/)?.[1]
-    ?? null;
-  const components = source.match(/\b(components)\b/)?.[1]
-    ?? source.match(/\b([A-Za-z_$][\w$]*)\.Button\b/)?.[1]
-    ?? null;
-  const markdown = source.match(/(?:const|let|var|function)\s+(Markdown)\b/)?.[1] ?? null;
-  const openExternal = source.match(/(?:const|let|var)\s+(openExternal)\s*=/)?.[1]
-    ?? source.match(/\b([A-Za-z_$][\w$]*)\s*=\s*\([^)]*href[^)]*\)\s*=>/)?.[1]
-    ?? null;
-  if (react == null || components == null || markdown == null || openExternal == null) return null;
-  return { React: react, components, Markdown: markdown, openExternal };
-}
-
-function capturePullRequestDetailIdentifiers(source) {
-  const react = source.match(/\(0,([A-Za-z_$][\w$]*)\.jsx\)/)?.[1] ?? null;
-  const markdown = source.match(/\(0,[A-Za-z_$][\w$]*\.jsx\)\(([A-Za-z_$][\w$]*),\{account:[^}]{0,120}?allowBasicHtml:!0/)?.[1] ?? null;
-  const components = source.match(/\(0,[A-Za-z_$][\w$]*\.jsx\)\(([A-Za-z_$][\w$]*),\{actions:/)?.[1] ?? null;
-  const openExternal = source.match(/\b([A-Za-z_$][\w$]*)\(\{event:[^}]{0,160}?href:/)?.[1] ?? null;
-  if (react == null || components == null || markdown == null || openExternal == null) return null;
-  return { React: react, components, Markdown: markdown, openExternal };
-}
-
-function captureCurrentSharedIdentifiers(source) {
-  if (!source.includes("function XH(") || !source.includes("const openExternal") || !source.includes("var ZH")) return null;
-  return { React: "ZH", components: "C", Markdown: "XH", openExternal: "openExternal" };
-}
-
 function captureRouteShape(source) {
-  const lazyPattern = /(?:\b(?:const|let|var)\s+|[,;])([A-Za-z_$][\w$]*)\s*=\s*(?:(?:[A-Za-z_$][\w$]*\.)?[A-Za-z_$][\w$]*)\(/g;
+  const lazyPattern = /(?:\b(?:const|let|var)\s+|[,;])([A-Za-z_$][\w$]*)\s*=\s*(?:(?:[A-Za-z_$][\w$]*)\.)?([A-Za-z_$][\w$]*)\(/g;
+  const routeEntry = source.match(/(\(0,([A-Za-z_$][\w$]*)\.jsx\)\([A-Za-z_$][\w$]*,\{)path:`\/pull-requests`/);
+  if (routeEntry == null) return null;
+  const routeTableIndex = routeEntry.index;
   let lazyMatch = null;
   for (const candidate of source.matchAll(lazyPattern)) {
+    if (candidate.index >= routeTableIndex) break;
     const candidateOpen = candidate.index + candidate[0].lastIndexOf("(");
     let depth = 0;
     let candidateClose = -1;
@@ -147,16 +121,58 @@ function captureRouteShape(source) {
     }
     if (candidateClose !== -1 && (candidate[1] === "PullRequestsRoute" || source.slice(candidateOpen, candidateClose + 1).includes("PullRequestsRoute"))) {
       lazyMatch = candidate;
-      break;
     }
   }
   if (lazyMatch == null) return null;
-  const routeEntry = source.match(/(\(0,([A-Za-z_$][\w$]*)\.jsx\)\([A-Za-z_$][\w$]*,\{)path:`\/pull-requests`/);
-  if (routeEntry == null) return null;
+  const reactCandidates = [...source.matchAll(/\b([A-Za-z_$][\w$]*)\s*=\s*[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\(\),1\)/g)]
+    .filter((match) => match.index < routeTableIndex && source.includes(`${match[1]}.Suspense`));
+  const react = reactCandidates.at(-1)?.[1]
+    ?? source.match(/\b(?:const|let|var)\s+(React)\s*=/)?.[1]
+    ?? null;
+  if (react == null) return null;
   return {
     entryPrefix: routeEntry[1],
     jsxAlias: routeEntry[2],
+    lazyWrapper: lazyMatch[2],
+    react,
   };
+}
+
+function findPullRequestMarkdownDependency(entries) {
+  const candidates = [];
+  for (const entry of entries) {
+    if (!/^pull-request-route-.*\.js$/.test(entry.name)) continue;
+    const markdownCall = entry.source.match(/\(0,[A-Za-z_$][\w$]*\.jsx\)\(([A-Za-z_$][\w$]*),\{[^}]*allowBasicHtml:!0[^}]*children:e\}\)/);
+    if (markdownCall == null) continue;
+    const localMarkdown = markdownCall[1];
+    const importPattern = /import\{([^}]+)\}from"\.\/(pull-request-actions-[^"]+\.js)"/g;
+    for (const importMatch of entry.source.matchAll(importPattern)) {
+      const specifier = importMatch[1].split(",").map((part) => part.trim());
+      const imported = specifier.map((part) => {
+        const alias = part.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+        if (alias != null && alias[2] === localMarkdown) return alias[1];
+        return part === localMarkdown ? part : null;
+      }).find((value) => value != null);
+      if (imported == null) continue;
+      const actionEntry = entries.find(({ name }) => name === importMatch[2]);
+      const exportBlock = actionEntry?.source.match(/export\{[^}]+\}/)?.[0] ?? "";
+      const exported = exportBlock.match(new RegExp(`\\b([A-Za-z_$][\\w$]*)\\s+as\\s+${imported}\\b`));
+      const sourceSymbol = exported?.[1];
+      const sourceStart = actionEntry == null || sourceSymbol == null
+        ? -1
+        : actionEntry.source.search(new RegExp(`(?:function|const|let|var)\\s+${sourceSymbol}\\b`));
+      if (actionEntry == null || sourceStart === -1 || !actionEntry.source.slice(sourceStart, sourceStart + 2500).includes("children")) continue;
+      candidates.push({ actionName: actionEntry.name, markdownExport: imported });
+    }
+  }
+  if (candidates.length !== 1) {
+    return {
+      error: candidates.length === 0
+        ? "no Pull Requests raw Markdown dependency asset found"
+        : `found ${candidates.length} Pull Requests raw Markdown dependency assets`,
+    };
+  }
+  return { dependency: candidates[0] };
 }
 
 function captureNavShape(source) {
@@ -183,7 +199,16 @@ function captureNavShape(source) {
   if (end === -1) return null;
   const block = source.slice(start, end);
   if (!block.includes("/pull-requests") || !block.includes("defaultMessage:`Pull requests`")) return null;
-  return { start, end, block };
+  const click = block.match(/onClick:\(\)=>\{[^{}]*\}/);
+  if (click == null) return null;
+  const navigateCall = click[0].match(/\b([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)/);
+  if (navigateCall == null) return null;
+  const navigateAlias = navigateCall[3];
+  const scopeStart = source.lastIndexOf("function ", navStart);
+  const navigateScope = source.slice(scopeStart === -1 ? 0 : scopeStart, navStart);
+  const navigateAssignments = [...navigateScope.matchAll(new RegExp(`(?:^|[,;])${navigateAlias}=ln\\(\\),`, "g"))];
+  if (navigateAssignments.length !== 1) return null;
+  return { start, end, block, navigateAlias };
 }
 
 function captureNavContainer(source, navShape) {
@@ -229,74 +254,25 @@ function patchIssuesRouteAssets(extractedDir) {
   );
   if (routeResult.error) return driftResult(routeResult.error);
   const routeEntry = routeResult.entry;
-  let dependencyResult = findOne(
-    entries,
-    ({ source }) => captureSharedIdentifiers(source) != null
-      && /\bMarkdown\s*\(/.test(source)
-      && /\bopenExternal\s*\(/.test(source),
-    "Pull Requests shared dependency assets",
-  );
-  let dependencyEntry;
-  let dependencies;
-  if (dependencyResult.error) {
-    const currentSharedResult = findOne(
-      entries,
-      ({ source }) => captureCurrentSharedIdentifiers(source) != null,
-      "current shared renderer dependency assets",
-    );
-    if (!currentSharedResult.error) {
-      dependencyEntry = currentSharedResult.entry;
-      dependencies = captureCurrentSharedIdentifiers(dependencyEntry.source);
-    } else {
-      dependencyResult = findOne(
-        entries,
-        ({ source }) => source.includes("allowBasicHtml:!0")
-          && source.includes("useExternalBrowser:!0")
-          && source.includes("PullRequestsRoute"),
-        "Pull Requests detail dependency assets",
-      );
-      if (dependencyResult.error) return driftResult(dependencyResult.error);
-      dependencyEntry = dependencyResult.entry;
-      dependencies = capturePullRequestDetailIdentifiers(dependencyEntry.source);
-    }
-  } else {
-    dependencyEntry = dependencyResult.entry;
-    dependencies = captureSharedIdentifiers(dependencyEntry.source);
-  }
+  const dependencyResult = findPullRequestMarkdownDependency(entries);
   const routeShape = captureRouteShape(routeEntry.source);
-  if (dependencies == null) return driftResult("shared React, components, Markdown, or external-link anchors did not match");
+  if (dependencyResult.error) return driftResult(dependencyResult.error);
   if (routeShape == null) return driftResult("Pull Requests lazy route or route-table anchor did not match");
 
   const routeAlreadyApplied = routeEntry.source.includes(ISSUES_ROUTE_MARKER);
-  const depAlreadyApplied = dependencyEntry.source.includes(ISSUES_DEPENDENCY_MARKER);
-  if (routeAlreadyApplied && depAlreadyApplied) return { matched: true, changed: 0 };
+  if (routeAlreadyApplied) return { matched: true, changed: 0 };
 
-  const staged = new Map();
   let routeSource = routeEntry.source;
-  if (!routeAlreadyApplied) {
-    const lazyExpression = [
-      `const ${ISSUES_ROUTE_MARKER}=true;`,
-      `const codexLinuxGithubIssuesRoute=(()=>{const {React,components,Markdown,openExternal}=globalThis.${ISSUES_DEPENDENCY_MARKER};return React.lazy(()=>import(\`/github-issues-tab.mjs\`).then(m=>({default:m.createIssuesRoute({React,components,Markdown,openExternal})})))})();`,
-    ].join("");
-    routeSource = lazyExpression + routeSource;
-    const patchedRouteMarkerIndex = routeSource.indexOf("path:`/pull-requests`", lazyExpression.length);
-    const patchedEntryStart = patchedRouteMarkerIndex - routeShape.entryPrefix.length;
-    routeSource = routeSource.slice(0, patchedEntryStart) + `${routeShape.entryPrefix}path:\`/issues\`,element:(0,${routeShape.jsxAlias}.jsx)(codexLinuxGithubIssuesRoute,{})}),` + routeSource.slice(patchedEntryStart);
-    staged.set(routeEntry.filePath, routeSource);
-  }
-
-  if (!depAlreadyApplied) {
-    const depSource = dependencyEntry.source;
-    const dependencyExpression = `;globalThis.${ISSUES_DEPENDENCY_MARKER}=globalThis.${ISSUES_DEPENDENCY_MARKER}||{React:${dependencies.React},components:${dependencies.components},Markdown:${dependencies.Markdown},openExternal:${dependencies.openExternal}};`;
-    const patchedDependency = dependencyEntry.filePath === routeEntry.filePath
-      ? dependencyExpression + routeSource
-      : depSource + dependencyExpression;
-    staged.set(dependencyEntry.filePath, patchedDependency);
-  }
-  for (const [filePath, patchedSource] of staged) {
-    if (patchedSource !== fs.readFileSync(filePath, "utf8")) fs.writeFileSync(filePath, patchedSource, "utf8");
-  }
-  return { matched: true, changed: staged.size };
+  const lazyExpression = [
+    `const ${ISSUES_ROUTE_MARKER}=true;`,
+    `const codexLinuxGithubIssuesRoute=${routeShape.lazyWrapper}(async()=>{const [issuesModule,markdownModule]=await Promise.all([import(\`/github-issues-tab.mjs\`),import(\`./${dependencyResult.dependency.actionName}\`)]);const openExternal=url=>window.electronBridge?.openExternal?.(url);return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:markdownModule.${dependencyResult.dependency.markdownExport},openExternal})})();`,
+  ].join("");
+  routeSource = lazyExpression + routeSource;
+  const patchedRouteMarkerIndex = routeSource.indexOf("path:`/pull-requests`", lazyExpression.length);
+  const patchedEntryStart = patchedRouteMarkerIndex - routeShape.entryPrefix.length;
+  routeSource = routeSource.slice(0, patchedEntryStart) + `${routeShape.entryPrefix}path:\`/issues\`,element:(0,${routeShape.jsxAlias}.jsx)(codexLinuxGithubIssuesRoute,{})}),` + routeSource.slice(patchedEntryStart);
+  if (routeSource !== routeEntry.source) fs.writeFileSync(routeEntry.filePath, routeSource, "utf8");
+  return { matched: true, changed: 1 };
 }
 
 function patchIssuesNavigationAssets(extractedDir) {
@@ -330,6 +306,7 @@ function patchIssuesNavigationAssets(extractedDir) {
   }
   const issuesBlock = navShape.block
     .replace(/icon:[^,]+/, `icon:${importMarker}`)
+    .replace(/onClick:\(\)=>\{[^{}]*\}/, `onClick:()=>{${navShape.navigateAlias}(\`/issues\`)}`)
     .replaceAll("/pull-requests", "/issues")
     .replace("sidebarElectron.pullRequestsRouteNavLink", ISSUES_NAV_MARKER)
     .replace("defaultMessage:`Pull requests`", "defaultMessage:`Issues`")
@@ -389,6 +366,5 @@ module.exports = {
   patchIssuesRouteAssets,
   patchIssuesNavigationAssets,
   ISSUES_ROUTE_MARKER,
-  ISSUES_DEPENDENCY_MARKER,
   ISSUES_NAV_MARKER,
 };

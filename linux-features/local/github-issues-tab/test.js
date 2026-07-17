@@ -665,6 +665,7 @@ test("review follow-up preserves rate-limit cost, row structure, cancellation br
   assert.match(source, /function ListRow[\s\S]*?role: "group"[\s\S]*?repoLink/);
   assert.match(source, /function ListRow[\s\S]*?node\(React, "button"[\s\S]*?onClick: onSelect/);
   assert.match(source, /node\(React, "button"[\s\S]*?\),\s*node\(React, "div"[\s\S]*?authorUrl/);
+  assert.equal((source.match(/dispatch\(\{ \.\.\.startAction, requestId, \.\.\.extra \}\)/g) ?? []).length, 1);
   assert.match(source, /cancelPending\("list"\)[\s\S]*?cancelPending\("detail"\)[\s\S]*?cancelPending\("timeline"\)/);
   assert.match(source, /mounted\.current[\s\S]*?Promise\.resolve\(\)\.then\(\(\) => \{[\s\S]*?request\(/);
   assert.match(source, /children: issue\.body/);

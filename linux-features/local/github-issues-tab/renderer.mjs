@@ -665,6 +665,7 @@ export function createIssuesRoute(deps = {}) {
     }, [send, state.host, state.view, state.stateFilter, state.repository, state.text, state.listPage.endCursor]);
     const loadDetail = React.useCallback((issue) => {
       if (!state.host || !issue?.id) return null;
+      cancelPending("timeline");
       const requestId = randomRequestId("detail");
       const previous = pending.current.detail;
       if (previous) cancel(previous);
@@ -698,7 +699,7 @@ export function createIssuesRoute(deps = {}) {
         if (mounted.current) dispatch({ type: "detail-error", requestId, error: safeError(error) });
       });
       return requestId;
-    }, [cancel, state.host]);
+    }, [cancel, cancelPending, state.host]);
     const loadTimeline = React.useCallback(() => {
       const issueId = state.selectedId;
       const cursor = state.timeline.pageInfo?.endCursor;

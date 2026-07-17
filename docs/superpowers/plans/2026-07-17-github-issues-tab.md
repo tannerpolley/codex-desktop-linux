@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a local-only, read-only GitHub Issues inbox beside Pull Requests with Assigned, Authored, and All views plus a full Issue timeline.
+**Goal:** Build a branch-local, read-only GitHub Issues inbox beside Pull Requests with Assigned, Authored, and All views plus a full Issue timeline.
 
 **Architecture:** A current-DMG renderer patch adds the nav item and route, while a preload/main-process patch exposes one validated `window.electronBridge.githubIssues.request` method. The main process runs a staged Node adapter that owns fixed `gh api graphql` documents and returns normalized JSON over stdio; credentials never enter the renderer.
 
@@ -10,8 +10,8 @@
 
 ## Global Constraints
 
-- All implementation files live under gitignored `linux-features/local/github-issues-tab/`; do not use `git add -f` or commit them.
-- Only this tracked plan and the approved design specification belong in Git history.
+- All implementation files live under normally gitignored `linux-features/local/github-issues-tab/` and are intentionally force-added to this local feature branch for task commits and reviews.
+- Do not push this branch or create a PR without separate user authorization.
 - The feature id is exactly `github-issues-tab`, `defaultEnabled` is `false`, and `features.example.json` remains unchanged.
 - The route is read-only: no task-start or GitHub mutation control may be rendered or exposed by the bridge.
 - The adapter owns every GraphQL document and invokes `gh` with `spawn`/`execFile`, never a shell.
@@ -33,6 +33,7 @@
 - Create `linux-features/local/github-issues-tab/test.js`: manifest, descriptor, bridge, route-state, and drift tests.
 - Create `linux-features/local/github-issues-tab/issues-adapter.test.js`: adapter/query/normalization/process tests.
 - Create `linux-features/local/github-issues-tab/fixtures/*.json`: GraphQL capabilities, list, detail, partial-error, and timeline fixtures.
+- Create `linux-features/local/github-issues-tab/VALIDATION.md`: current-DMG commands and observed acceptance evidence.
 - Modify `linux-features/features.json`: enable only `github-issues-tab` for the local rebuild.
 
 ---
@@ -127,11 +128,16 @@ Run: `node --test linux-features/local/github-issues-tab/test.js`
 
 Expected: PASS for the manifest and protocol tests.
 
-- [ ] **Step 6: Record the local-only checkpoint**
+- [ ] **Step 6: Commit the feature contract**
 
-Run: `git status --short --ignored linux-features/local/github-issues-tab`
+Run:
 
-Expected: `!! linux-features/local/`; no implementation file is staged or tracked.
+```bash
+git add -f linux-features/local/github-issues-tab/README.md linux-features/local/github-issues-tab/feature.json linux-features/local/github-issues-tab/protocol.js linux-features/local/github-issues-tab/test.js
+git commit -m "feat: define local GitHub Issues feature contract"
+```
+
+Expected: commit succeeds; `linux-features/features.json` remains ignored and unstaged.
 
 ---
 
@@ -210,11 +216,16 @@ Run: `node --test linux-features/local/github-issues-tab/issues-adapter.test.js`
 
 Expected: PASS for capabilities, three views, filters, pagination, partial data, process limits, and safe argv handling.
 
-- [ ] **Step 7: Record the local-only checkpoint**
+- [ ] **Step 7: Commit the Issue list adapter**
 
-Run: `git status --short --ignored linux-features/local/github-issues-tab`
+Run:
 
-Expected: only ignored local-feature state.
+```bash
+git add -f linux-features/local/github-issues-tab/issues-adapter.js linux-features/local/github-issues-tab/issues-adapter.test.js linux-features/local/github-issues-tab/fixtures/capabilities.json linux-features/local/github-issues-tab/fixtures/list-assigned.json linux-features/local/github-issues-tab/fixtures/partial-list.json
+git commit -m "feat: add GitHub Issues list adapter"
+```
+
+Expected: commit succeeds with only Task 2 files.
 
 ---
 
@@ -283,11 +294,16 @@ Run: `node --test linux-features/local/github-issues-tab/issues-adapter.test.js`
 
 Expected: all adapter tests PASS with no network calls.
 
-- [ ] **Step 7: Record the local-only checkpoint**
+- [ ] **Step 7: Commit Issue detail and timeline support**
 
-Run: `git status --short --ignored linux-features/local/github-issues-tab`
+Run:
 
-Expected: only ignored local-feature state.
+```bash
+git add -f linux-features/local/github-issues-tab/issues-adapter.js linux-features/local/github-issues-tab/issues-adapter.test.js linux-features/local/github-issues-tab/fixtures/issue-detail.json linux-features/local/github-issues-tab/fixtures/timeline-page-2.json linux-features/local/github-issues-tab/fixtures/timeline-partial.json
+git commit -m "feat: render GitHub Issue timeline data"
+```
+
+Expected: commit succeeds with only Task 3 files.
 
 ---
 
@@ -365,11 +381,16 @@ Run: `node --test linux-features/local/github-issues-tab/test.js`
 
 Expected: all protocol, manifest, bridge, idempotence, and drift tests PASS.
 
-- [ ] **Step 8: Record the local-only checkpoint**
+- [ ] **Step 8: Commit the Electron bridge**
 
-Run: `git status --short --ignored linux-features/local/github-issues-tab`
+Run:
 
-Expected: only ignored local-feature state.
+```bash
+git add -f linux-features/local/github-issues-tab/bridge-source.js linux-features/local/github-issues-tab/patch.js linux-features/local/github-issues-tab/test.js
+git commit -m "feat: bridge GitHub Issues through Electron"
+```
+
+Expected: commit succeeds with only Task 4 files.
 
 ---
 
@@ -431,11 +452,16 @@ Run: `node --test linux-features/local/github-issues-tab/test.js`
 
 Expected: all renderer state and static safety tests PASS; dynamic import parses without a DOM.
 
-- [ ] **Step 8: Record the local-only checkpoint**
+- [ ] **Step 8: Commit the Issues renderer**
 
-Run: `git status --short --ignored linux-features/local/github-issues-tab`
+Run:
 
-Expected: only ignored local-feature state.
+```bash
+git add -f linux-features/local/github-issues-tab/renderer.mjs linux-features/local/github-issues-tab/test.js
+git commit -m "feat: add read-only GitHub Issues renderer"
+```
+
+Expected: commit succeeds with only Task 5 files.
 
 ---
 
@@ -498,11 +524,16 @@ node --test linux-features/local/github-issues-tab/issues-adapter.test.js
 
 Expected: all tests PASS, including idempotence and deliberate drift fixtures.
 
-- [ ] **Step 8: Record the local-only checkpoint**
+- [ ] **Step 8: Commit route and navigation attachment**
 
-Run: `git status --short --ignored linux-features/local/github-issues-tab`
+Run:
 
-Expected: only ignored local-feature state.
+```bash
+git add -f linux-features/local/github-issues-tab/patch.js linux-features/local/github-issues-tab/test.js
+git commit -m "feat: attach local GitHub Issues route"
+```
+
+Expected: commit succeeds with only Task 6 files.
 
 ---
 
@@ -510,6 +541,7 @@ Expected: only ignored local-feature state.
 
 **Files:**
 - Modify: `linux-features/features.json`
+- Create: `linux-features/local/github-issues-tab/VALIDATION.md`
 - Verify generated: `codex-app/`, `dist-next/rebuild/patch-report.json`
 
 **Interfaces:**
@@ -610,11 +642,24 @@ git status --short --branch
 git status --short --ignored linux-features/local/github-issues-tab linux-features/features.json
 ```
 
-Expected: cleanup reports `cleanup_state: clean`; tracked status contains no implementation changes; the feature directory and enablement file remain ignored local state.
+Expected: cleanup reports `cleanup_state: clean`; tracked status is clean; only `linux-features/features.json` remains ignored local state.
+
+- [ ] **Step 9: Record and commit current-DMG validation evidence**
+
+Create `VALIDATION.md` with the tested DMG/app version, date, exact commands and exit statuses, patch-report statuses, authenticated hostname category (`github.com` or Enterprise hostname without account secrets), and the eight manual acceptance outcomes. Do not include tokens, raw private Issue data, logs, generated artifacts, or screenshots containing private content.
+
+Run:
+
+```bash
+git add -f linux-features/local/github-issues-tab/VALIDATION.md
+git commit -m "test: validate local GitHub Issues tab"
+```
+
+Expected: commit succeeds and `git status --short --branch` is clean.
 
 ## Execution notes
 
 - Red/green evidence is required for each TDD task. Do not accept a test that was first observed only after the implementation existed.
-- Because the implementation is intentionally ignored, replace each normal task commit with the explicit ignored-state checkpoint shown above. Never force-add the prototype.
+- The implementation is intentionally force-tracked only on this local feature branch so subagent task reviews can use commit diffs. Do not push or publish it without separate authorization.
 - If current-DMG inspection disproves a route/preload/main seam assumed here, stop at that task, update the approved design/plan with the discovered boundary, and obtain review before broadening core scope.
 - Do not modify generated `codex-app/start.sh`, installed `/opt/codex-desktop`, or user cache assets to make the prototype appear to work.

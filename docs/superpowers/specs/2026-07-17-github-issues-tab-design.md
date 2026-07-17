@@ -4,7 +4,7 @@
 
 **Status:** Approved design; pending implementation plan
 
-**Delivery:** Local-only Linux feature prototype
+**Delivery:** Branch-local Linux feature prototype
 
 ## Summary
 
@@ -15,10 +15,13 @@ persistent detail pane. Selecting an Issue renders its body, comments, and
 meaningful timeline events without offering mutation or task-start actions.
 
 The implementation belongs under
-`linux-features/local/github-issues-tab/`. That directory is gitignored and the
-feature remains disabled unless it is explicitly enabled in the local
-`linux-features/features.json`. This tracked document records the design; it
-does not make the prototype a supported repository feature.
+`linux-features/local/github-issues-tab/`. That directory is normally
+gitignored, but this prototype is intentionally force-tracked on its local
+feature branch so task commits and reviews have durable diffs. It must not be
+pushed or proposed upstream without separate authorization. The feature
+remains disabled unless it is explicitly enabled in the local
+`linux-features/features.json`; tracking it does not make it a supported
+repository feature.
 
 ## Goals
 
@@ -41,7 +44,7 @@ does not make the prototype a supported repository feature.
   Issues.
 - Starting a Codex task from an Issue.
 - Notifications, subscriptions, saved searches, or background polling.
-- Shipping or enabling a supported repository feature.
+- Shipping, pushing, or enabling a supported repository feature.
 - Preserving compatibility with older DMG asset shapes.
 - Reimplementing the Pull Requests route wholesale when stable shared UI
   pieces can be reused.
@@ -365,9 +368,10 @@ The app-launch path must remain usable even if none of the descriptors apply.
   every timeline.
 - GitHub Enterprise instances may omit newer timeline fields. The normalized
   model treats those fields as optional and surfaces partial-data warnings.
-- The local-only delivery avoids committing an experimental integration, but
-  it also means the prototype and its tests will not run in normal repository
-  CI unless explicitly invoked from the local feature path.
+- The branch-local delivery gives the experimental integration reviewable
+  commits without changing its disabled/private-feature status. Its tests will
+  not run in normal repository CI unless explicitly invoked from the local
+  feature path, and the branch must not be pushed without separate approval.
 
 ## Design completion
 

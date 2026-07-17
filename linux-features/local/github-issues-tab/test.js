@@ -478,3 +478,95 @@ test("preload descriptor reports an ambiguous bridge anchor as optional drift", 
   assert.equal(optionalDriftStatus(result, [] ).status, "skipped-optional");
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+let rendererModule;
+async function renderer() {
+  rendererModule ??= await import("./renderer.mjs");
+  return rendererModule;
+}
+
+test("stale list and detail responses cannot replace current state", async () => {
+  const { initialIssuesState, issuesReducer } = await renderer();
+  let state = initialIssuesState();
+  state = issuesReducer(state, { type: "list-start", requestId: "list-2" });
+  assert.equal(issuesReducer(state, { type: "list-success", requestId: "list-1", data: { issues: [] } }), state);
+  state = issuesReducer(state, { type: "select", issueId: "I_2", requestId: "detail-2" });
+  assert.equal(issuesReducer(state, { type: "detail-success", requestId: "detail-1", data: {} }), state);
+});
+
+test("timeline pages append chronologically without duplicates", async () => {
+  const { mergeTimeline } = await renderer();
+  assert.deepEqual(
+    mergeTimeline(
+      [{ id: "a", createdAt: "2026-01-01" }],
+      [{ id: "a", createdAt: "2026-01-01" }, { id: "b", createdAt: "2026-01-02" }],
+    ).map((item) => item.id),
+    ["a", "b"],
+  );
+});
+
+test("reducer models loading, partial, populated, and typed error transitions", async () => {
+  const { initialIssuesState, issuesReducer } = await renderer();
+  let state = initialIssuesState();
+  state = issuesReducer(state, { type: "list-start", requestId: "list-1" });
+  assert.equal(state.list.status, "loading");
+  state = issuesReducer(state, {
+    type: "list-success",
+    requestId: "list-1",
+    data: { host: "github.com", viewerLogin: "octocat", issues: [{ id: "I_1" }], pageInfo: { hasNextPage: true, endCursor: "next" }, warnings: [{ type: "FIELD_ERROR" }] },
+  });
+  assert.equal(state.list.status, "partial");
+  assert.equal(state.list.items.length, 1);
+  assert.equal(state.listPage.endCursor, "next");
+  state = issuesReducer(state, { type: "list-start", requestId: "list-2", append: true });
+  state = issuesReducer(state, { type: "list-error", requestId: "list-2", error: { code: "offline", message: "offline" } });
+  assert.equal(state.list.status, "error");
+  assert.equal(state.list.error.code, "offline");
+});
+
+test("host changes invalidate prior data and refresh preserves selection when present", async () => {
+  const { initialIssuesState, issuesReducer } = await renderer();
+  let state = initialIssuesState();
+  state = issuesReducer(state, { type: "host-set", host: "github.com" });
+  state = issuesReducer(state, { type: "list-start", requestId: "list-1" });
+  state = issuesReducer(state, { type: "list-success", requestId: "list-1", data: { host: "github.com", issues: [{ id: "I_1" }], pageInfo: {} } });
+  state = issuesReducer(state, { type: "select", issueId: "I_1", requestId: "detail-1" });
+  state = issuesReducer(state, { type: "list-start", requestId: "list-2" });
+  state = issuesReducer(state, { type: "list-success", requestId: "list-2", data: { host: "github.com", issues: [{ id: "I_1" }], pageInfo: {} } });
+  assert.equal(state.selectedId, "I_1");
+  state = issuesReducer(state, { type: "host-set", host: "ghe.example.com" });
+  assert.equal(state.host, "ghe.example.com");
+  assert.deepEqual(state.list.items, []);
+  assert.equal(state.selectedId, null);
+});
+
+test("list and timeline pagination append while retaining chronological generic events", async () => {
+  const { initialIssuesState, issuesReducer, mergeTimeline } = await renderer();
+  let state = initialIssuesState();
+  state = issuesReducer(state, { type: "list-start", requestId: "list-1" });
+  state = issuesReducer(state, { type: "list-success", requestId: "list-1", data: { issues: [{ id: "I_1" }], pageInfo: { hasNextPage: true, endCursor: "cursor-1" } } });
+  state = issuesReducer(state, { type: "list-start", requestId: "list-2", append: true });
+  state = issuesReducer(state, { type: "list-success", requestId: "list-2", data: { issues: [{ id: "I_1" }, { id: "I_2" }], pageInfo: { hasNextPage: false, endCursor: null } } });
+  assert.deepEqual(state.list.items.map((issue) => issue.id), ["I_1", "I_2"]);
+  state = issuesReducer(state, { type: "select", issueId: "I_1", requestId: "detail-1" });
+  state = issuesReducer(state, { type: "detail-success", requestId: "detail-1", data: { issue: { id: "I_1" }, timeline: { items: [{ id: "generic-1", kind: "generic", type: "FutureEvent", createdAt: "2026-01-02" }], pageInfo: { hasNextPage: true, endCursor: "timeline-1" } } } });
+  state = issuesReducer(state, { type: "timeline-start", requestId: "timeline-2", append: true });
+  state = issuesReducer(state, { type: "timeline-success", requestId: "timeline-2", data: { items: [{ id: "generic-1", kind: "generic", type: "FutureEvent", createdAt: "2026-01-02" }, { id: "generic-2", kind: "generic", type: "AnotherEvent", createdAt: "2026-01-03" }] } });
+  assert.deepEqual(state.timeline.items.map((item) => item.id), ["generic-1", "generic-2"]);
+  assert.deepEqual(mergeTimeline(state.timeline.items, [{ id: "generic-2", createdAt: "2026-01-03" }]).map((item) => item.id), ["generic-1", "generic-2"]);
+});
+
+test("renderer source remains read-only and dependency-bound", () => {
+  const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
+  for (const view of ["Assigned", "Authored", "All"]) assert.match(source, new RegExp(view, "i"));
+  for (const token of ["Open", "Closed", "Refresh", "Timeline"]) assert.match(source, new RegExp(token, "i"));
+  for (const forbidden of ["Start task", "child_process", "innerHTML", "shell.openExternal", "process.env", "gh "]) {
+    assert.doesNotMatch(source, new RegExp(forbidden.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&"), "i"));
+  }
+});
+
+test("renderer dynamically imports without a DOM", async () => {
+  const module = await renderer();
+  assert.equal(typeof module.createIssuesRoute, "function");
+  assert.equal(typeof module.issuesReducer, "function");
+});

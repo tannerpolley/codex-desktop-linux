@@ -1378,6 +1378,17 @@ function currentTrayLifecycleBundleFixture() {
   ].join("");
 }
 
+function currentUpstreamTrayBundleFixture() {
+  return [
+    "var h6=class{getNativeTrayMenuItems(){return[]}};",
+    "async function ore(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(W9=!0,V9??(c.app.on(`before-quit`,()=>{G9()}),H9=(async()=>{let t=await sre(e.buildFlavor,e.appBrand,e.repoRoot),n=new c.Tray(t.defaultIcon);return n.setToolTip(c.app.getName()),V9=new h6(n)})(),H9))}",
+    "function G9(){W9=!1,V9?.destroy(),V9=null}",
+    "async function sre(e,t,n){let r=K9(e,t,n);return r==null?{defaultIcon:await c.app.getFileIcon(process.execPath,{size:`small`}),chronicleRunningIcon:null}:{defaultIcon:r,chronicleRunningIcon:null}}",
+    "function K9(e,t,n){let r=c.nativeImage.createFromPath(iconPath);return r.isEmpty()?null:r}",
+    "v&&k.on(`close`,e=>{this.persistPrimaryWindowBounds(k);let t=this.getPrimaryWindows().some(e=>e!==k);if(process.platform===`win32`&&!this.isAppQuitting&&this.options.canHideLastWindowToTray?.()===!0&&!t){e.preventDefault(),k.hide();return}if(process.platform===`darwin`&&!this.isAppQuitting&&!t){e.preventDefault(),k.hide()}});",
+  ].join("");
+}
+
 function currentTrayMenuBundleFixture() {
   return [
     "var sW=class{trayMenuThreads={runningThreads:[],unreadThreads:[],pinnedThreads:[],recentThreads:[],usageLimits:[]};constructor(){this.tray={on(){},setContextMenu(){},popUpContextMenu(){}}}getNativeTrayMenuItems(){let{pinnedThreads:e,recentThreads:t,runningThreads:r,unreadThreads:i,usageLimits:a}=this.trayMenuThreads,o=this.nativeIntl.formatMessage({messageId:vc,defaultMessage:yc}),s=this.nativeIntl.formatMessage({messageId:gc,defaultMessage:_c}),c=uW({label:this.nativeIntl.formatMessage({messageId:oc,defaultMessage:sc}),moreLabel:s,threads:r,projectlessLabel:o,onOpenThread:this.onTrayMenuOpenRecentThread}),h=[c].filter(e=>e.length>0).flatMap((e,t)=>t===0?e:[{type:`separator`},...e]);return[...h,...h.length>0?[{type:`separator`}]:[],{label:this.nativeIntl.formatMessage({messageId:nc,defaultMessage:rc}),click:()=>{this.onTrayMenuOpenNewThread()}},{type:`separator`},{label:this.systemQuitMenuItemLabel,click:()=>{n.app.quit()}}]}};",
@@ -2568,6 +2579,34 @@ test("destroys the registered Linux tray before the app exits", () => {
     `${helperSource}let calls=0;codexLinuxRegisterTray({destroy(){calls+=1}});codexLinuxMarkQuitInProgress();codexLinuxMarkQuitInProgress();return calls;`,
   );
   assert.equal(runDestroy({ platform: "linux" }), 1);
+});
+
+test("expands the current upstream Windows close-to-tray condition for Linux", () => {
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
+  const source = `${currentMainBundlePrefix}${currentUpstreamTrayBundleFixture()}`;
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, iconPathExpression);
+
+  assert.match(
+    patched,
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)/,
+  );
+  assert.match(
+    patched,
+    /process\.platform!==`win32`&&process\.platform!==`darwin`&&process\.platform!==`linux`\?null/,
+  );
+  assert.match(patched, /c\.app\.on\(`before-quit`,\(\)=>\{G9\(\)\}\)/);
+  assert.match(patched, /function G9\(\)\{W9=!1,V9\?\.destroy\(\),V9=null\}/);
+  assert.match(patched, /c\.app\.getFileIcon\(process\.execPath,/);
+});
+
+test("rejects the current native tray gate without equivalent teardown or icon fallback", () => {
+  const source = `${currentMainBundlePrefix}${currentUpstreamTrayBundleFixture()}`;
+  const missingTeardown = source.replace("V9?.destroy(),", "V9=null,");
+  const missingIconFallback = source.replace("c.app.getFileIcon(process.execPath", "fallbackIcon(process.execPath");
+
+  assert.equal(applyLinuxTrayPatch(missingTeardown, null), missingTeardown);
+  assert.equal(applyLinuxTrayPatch(missingIconFallback, null), missingIconFallback);
 });
 
 test("accepts stock Electron tray readiness and falls back to the Linux app icon", async () => {

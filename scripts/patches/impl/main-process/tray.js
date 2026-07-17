@@ -6,7 +6,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   let patchedSource = currentSource;
 
   const closeToTrayPattern =
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)\.preventDefault\(\),([A-Za-z_$][\w$]*)\.hide\(\);return\}/;
+    /if\((?:\(process\.platform===`win32`\|\|process\.platform===`linux`\)|process\.platform===`win32`)&&!this\.isAppQuitting&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&!([A-Za-z_$][\w$]*)\)\{([A-Za-z_$][\w$]*)\.preventDefault\(\),([A-Za-z_$][\w$]*)\.hide\(\);return\}/;
   const guardedCloseToTrayPattern =
     /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)/;
   if (!guardedCloseToTrayPattern.test(patchedSource)) {
@@ -20,6 +20,37 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       closeToTrayPattern,
       `if((process.platform===\`win32\`||process.platform===\`linux\`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&this.options.canHideLastWindowToTray?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
     );
+  }
+
+  const currentTrayPlatformGate =
+    "process.platform!==`win32`&&process.platform!==`darwin`?null";
+  const linuxTrayPlatformGate =
+    "process.platform!==`win32`&&process.platform!==`darwin`&&process.platform!==`linux`?null";
+  if (patchedSource.includes(linuxTrayPlatformGate)) {
+    return patchedSource;
+  }
+  const currentTrayPlatformGateCount = patchedSource.split(currentTrayPlatformGate).length - 1;
+  if (currentTrayPlatformGateCount > 0) {
+    const trayConstructor = patchedSource.match(/new ([A-Za-z_$][\w$]*)\.Tray\(/u);
+    const beforeQuitCleanup = patchedSource.match(/([A-Za-z_$][\w$]*)\.app\.on\(`before-quit`,\(\)=>\{([A-Za-z_$][\w$]*)\(\)\}\)/u);
+    const cleanupFunction = beforeQuitCleanup?.[2] ?? null;
+    const cleanupPattern = cleanupFunction == null
+      ? null
+      : new RegExp(`function ${cleanupFunction.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}\\(\\)\\{[^}]{0,500}?\\?\\.destroy\\(\\)`, "u");
+    const electronVar = trayConstructor?.[1] ?? null;
+    if (
+      currentTrayPlatformGateCount !== 1 ||
+      electronVar == null ||
+      !patchedSource.includes("getNativeTrayMenuItems()") ||
+      cleanupPattern == null ||
+      !cleanupPattern.test(patchedSource) ||
+      !patchedSource.includes(`${electronVar}.nativeImage.createFromPath(`) ||
+      !patchedSource.includes(`${electronVar}.app.getFileIcon(process.execPath`)
+    ) {
+      console.warn("WARN: Could not verify the current native tray lifecycle and icon fallback — skipping Linux tray compatibility patch");
+      return currentSource;
+    }
+    return patchedSource.replace(currentTrayPlatformGate, linuxTrayPlatformGate);
   }
 
   const trayWhenReadyFallbackPattern =

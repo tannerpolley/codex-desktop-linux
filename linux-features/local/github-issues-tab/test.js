@@ -147,15 +147,38 @@ test("protocol validates response envelopes", () => {
 test("preload patch exposes one namespaced request method", () => {
   const source = "bridge.exposeInMainWorld(`electronBridge`,{openExternal:e=>ipc.invoke(`open-external`,e),getSentryInitOptions:()=>opts})";
   const once = applyPreloadBridgePatch(source);
-  assert.match(once, /githubIssues:\{request:e=>ipc\.invoke\(`codex-linux:github-issues`,e\)\}/);
+  assert.match(once, /githubIssues:\{request:request=>ipc\.invoke\(`codex-linux:github-issues`,request\)\}/);
+  assert.equal(applyPreloadBridgePatch(once), once);
+});
+
+test("preload patch supports the current named electronBridge object", () => {
+  const source = [
+    "let e=require(`electron`);",
+    "var j={windowType:g,sendMessageFromView:t=>e.ipcRenderer.invoke(channel,t),getSentryInitOptions:()=>y};",
+    "e.contextBridge.exposeInMainWorld(`electronBridge`,j);",
+  ].join("");
+  const once = applyPreloadBridgePatch(source);
+  assert.match(once, /githubIssues:\{request:request=>e\.ipcRenderer\.invoke\(`codex-linux:github-issues`,request\)\}/);
   assert.equal(applyPreloadBridgePatch(once), once);
 });
 
 test("main patch registers one handler and adapter runner", () => {
-  const source = "electron.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{});";
+  const source = "let Jl=`codex_desktop:message-from-view`;function attach(options){let{isTrustedIpcEvent:A}=options;electron.ipcMain.handle(Jl,async(e,t)=>{if(!A(e))return;consume(t)})}";
   const once = applyMainBridgePatch(source);
   assert.match(once, /codex-linux:github-issues/);
   assert.match(once, /issues-adapter\.js/);
+  assert.equal(applyMainBridgePatch(once), once);
+});
+
+test("main patch uses the current trusted message-from-view handler", () => {
+  const source = [
+    "let Jl=`codex_desktop:message-from-view`;",
+    "function attach(e){let{isTrustedIpcEvent:A}=e;",
+    "c.ipcMain.handle(Jl,async(e,t)=>{if(!A(e))return;consume(t)});}",
+  ].join("");
+  const once = applyMainBridgePatch(source);
+  assert.notEqual(once, source);
+  assert.match(once, /c\.ipcMain\.handle\(codexLinuxGithubIssuesChannel,async\(event,request\)=>\{if\(!A\(event\)\)return;return codexLinuxGithubIssuesHandle\(request\)\}\)/);
   assert.equal(applyMainBridgePatch(once), once);
 });
 
@@ -197,7 +220,7 @@ function writeIssueAssetFixture() {
     "const render=e=>(0,In.jsx)(Ht,{allowBasicHtml:!0,children:e});export{render};",
   ].join(""), "utf8");
   fs.writeFileSync(path.join(assetsDir, "route.js"), [
-    "const nw=fn=>fn;const FJ=t(U(),1);FJ.Suspense;const cY=nw(async()=>PullRequestsRoute);const PullRequestsRoute={};",
+    "var FJ,cY,_Y=e((()=>{FJ=t(U(),1),FJ.Suspense,cY=nw(async()=>PullRequestsRoute)}));const PullRequestsRoute={};",
     "const routes=(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(oa,{path:`/pull-requests`,element:(0,Q.jsx)(PullRequestsRoute,{})}),(0,Q.jsx)(oa,{path:`/library`,element:(0,Q.jsx)(AJ,{})})]});",
     "const a=q(J),o=ln(),s=cl();const nav=b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{fE(a,o)},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null;",
     "//# sourceMappingURL=route.js.map",
@@ -218,12 +241,14 @@ test("Issues route patch is transactional, idempotent, and wires captured depend
     assert.equal(first.changed, 1);
     const route = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
     assert.equal((route.match(/\/issues/g) ?? []).length, 1);
-    assert.match(route, /nw\(async\(\)=>\{const \[issuesModule,markdownModule\]=await Promise\.all\(\[import\(`\/github-issues-tab\.mjs`\),import\(`\.\/pull-request-actions-current\.js`\)\]\)/);
+    assert.match(route, /codexLinuxGithubIssuesRoute=nw\(async\(\)=>\{const \[issuesModule,markdownModule\]=await Promise\.all\(\[import\(`\/github-issues-tab\.mjs`\),import\(`\.\/pull-request-actions-current\.js`\)\]\)/);
     assert.match(route, /issuesModule\.createIssuesRoute\(\{React:FJ,components:\{\},Markdown:markdownModule\.l,openExternal\}\)/);
     assert.match(route, /openExternal=url=>\{try\{void Promise\.resolve\(window\.electronBridge\?\.openExternal\?\.\(url\)\)\.catch\(\(\)=>\{\}\)\}catch\{\}\}/);
-    assert.match(route, /Markdown:markdownModule\.l,openExternal\}\)\}\);/);
+    assert.match(route, /Markdown:markdownModule\.l,openExternal\}\)\}\),cY=/);
     assert.doesNotMatch(route, /Markdown:markdownModule\.l,openExternal\}\)\}\)\(\);/);
     assert.doesNotMatch(route, /React\.lazy|globalThis\.codexLinuxGithubIssuesDependencies/);
+    assert.ok(route.indexOf("codexLinuxGithubIssuesRoute=nw(") > route.indexOf("FJ=t(U(),1)"));
+    assert.match(route, /var codexLinuxGithubIssuesRoute,FJ,cY,_Y=/);
     assert.match(route, /sourceMappingURL=route\.js\.map/);
     assert.doesNotMatch(route, /children:\[const codexLinuxGithubIssuesRouteMarker/);
     assert.equal(fs.readFileSync(path.join(fixture.assetsDir, "pull-request-actions-current.js"), "utf8"), before["pull-request-actions-current.js"]);
@@ -433,19 +458,22 @@ test("main bridge mirrors protocol records and permits empty list text", async (
   assert.equal(children.length, 1);
 });
 
-test("main patch selects exactly one trusted update handler and ignores unrelated handlers", () => {
+test("main patch selects exactly one trusted message handler and rejects legacy unguarded anchors", () => {
   const source = [
+    "let Jl=`codex_desktop:message-from-view`;",
+    "function attach(options){let{isTrustedIpcEvent:A}=options;",
     "electron.ipcMain.handle(`other-channel`,async e=>{});",
-    "electron.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{});",
+    "electron.ipcMain.handle(Jl,async(e,t)=>{if(!A(e))return;consume(t)});}",
   ].join("\n");
   const patched = applyMainBridgePatch(source);
   assert.notEqual(patched, source);
   assert.equal((patched.match(/codex-linux:github-issues/g) ?? []).length, 1);
-  const missing = "electron.ipcMain.handle(`other-channel`,async e=>{});";
+  const missing = "electron.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{});";
   assert.equal(applyMainBridgePatch(missing), missing);
   const ambiguous = [
-    "electron.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{});",
-    "electron.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{});",
+    "let Jl=`codex_desktop:message-from-view`;",
+    "electron.ipcMain.handle(Jl,async(e,t)=>{if(!A(e))return;consume(t)});",
+    "electron.ipcMain.handle(Jl,async(e,t)=>{if(!A(e))return;consume(t)});",
   ].join("\n");
   assert.equal(applyMainBridgePatch(ambiguous), ambiguous);
 });
@@ -564,7 +592,7 @@ test("preload patch requires an actual getSentryInitOptions property", () => {
   const falsePositive = "bridge.exposeInMainWorld(`electronBridge`,{note:`getSentryInitOptions`,openExternal:e=>ipc.invoke(`open-external`,e)})";
   assert.equal(applyPreloadBridgePatch(falsePositive), falsePositive);
   const methodProperty = "bridge.exposeInMainWorld(`electronBridge`,{getSentryInitOptions(){return opts},openExternal:e=>ipc.invoke(`open-external`,e)})";
-  assert.match(applyPreloadBridgePatch(methodProperty), /githubIssues:\{request:e=>ipc\.invoke\(`codex-linux:github-issues`,e\)\}/);
+  assert.match(applyPreloadBridgePatch(methodProperty), /githubIssues:\{request:request=>ipc\.invoke\(`codex-linux:github-issues`,request\)\}/);
 });
 
 test("preload descriptor patches one .vite/build bundle and leaves other paths untouched", () => {

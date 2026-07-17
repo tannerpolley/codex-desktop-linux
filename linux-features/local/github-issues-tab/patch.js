@@ -42,7 +42,7 @@ function patchPreloadBridgeAssets(extractedDir) {
     const source = fs.readFileSync(filePath, "utf8");
     const patched = applyPreloadBridgePatch(source);
     if (patched === source) {
-      if (!source.includes("githubIssues:{request:e=>")) {
+      if (!source.includes("githubIssues:{request:")) {
         const reason = "electronBridge preload anchor did not match the current shape";
         console.warn(`WARN: ${reason} - skipping GitHub Issues preload bridge patch`);
         return { matched: false, changed: 0, reason };
@@ -130,10 +130,26 @@ function captureRouteShape(source) {
     ?? source.match(/\b(?:const|let|var)\s+(React)\s*=/)?.[1]
     ?? null;
   if (react == null) return null;
+  const declarationKeyword = lazyMatch[0].match(/^(?:const|let|var)\b/)?.[0] ?? null;
+  let variableInsertAt = null;
+  let expressionDelimiter = null;
+  if (declarationKeyword == null) {
+    expressionDelimiter = lazyMatch[0][0];
+    if (expressionDelimiter !== "," && expressionDelimiter !== ";") return null;
+    const declarationStart = source.lastIndexOf("var ", lazyMatch.index);
+    const declarationEnd = declarationStart === -1 ? -1 : source.indexOf("=", declarationStart);
+    if (declarationEnd === -1 || declarationEnd >= lazyMatch.index) return null;
+    const declaredNames = source.slice(declarationStart + 4, declarationEnd).split(",").map((name) => name.trim());
+    if (!declaredNames.includes(react) || !declaredNames.includes(lazyMatch[1])) return null;
+    variableInsertAt = declarationStart + 4;
+  }
   return {
     entryPrefix: routeEntry[1],
     jsxAlias: routeEntry[2],
     lazyWrapper: lazyMatch[2],
+    lazyInsertAt: lazyMatch.index,
+    variableInsertAt,
+    expressionDelimiter,
     react,
   };
 }
@@ -262,13 +278,19 @@ function patchIssuesRouteAssets(extractedDir) {
   const routeAlreadyApplied = routeEntry.source.includes(ISSUES_ROUTE_MARKER);
   if (routeAlreadyApplied) return { matched: true, changed: 0 };
 
-  let routeSource = routeEntry.source;
-  const lazyExpression = [
-    `const ${ISSUES_ROUTE_MARKER}=true;`,
-    `const codexLinuxGithubIssuesRoute=${routeShape.lazyWrapper}(async()=>{const [issuesModule,markdownModule]=await Promise.all([import(\`/github-issues-tab.mjs\`),import(\`./${dependencyResult.dependency.actionName}\`)]);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:markdownModule.${dependencyResult.dependency.markdownExport},openExternal})});`,
-  ].join("");
-  routeSource = lazyExpression + routeSource;
-  const patchedRouteMarkerIndex = routeSource.indexOf("path:`/pull-requests`", lazyExpression.length);
+  const markerExpression = `const ${ISSUES_ROUTE_MARKER}=true;`;
+  const routeVariable = "codexLinuxGithubIssuesRoute";
+  const routeAssignment = `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const [issuesModule,markdownModule]=await Promise.all([import(\`/github-issues-tab.mjs\`),import(\`./${dependencyResult.dependency.actionName}\`)]);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:markdownModule.${dependencyResult.dependency.markdownExport},openExternal})})`;
+  let routeBody = routeEntry.source;
+  if (routeShape.variableInsertAt == null) {
+    routeBody = `${routeBody.slice(0, routeShape.lazyInsertAt)}const ${routeAssignment};${routeBody.slice(routeShape.lazyInsertAt)}`;
+  } else {
+    routeBody = `${routeBody.slice(0, routeShape.variableInsertAt)}${routeVariable},${routeBody.slice(routeShape.variableInsertAt)}`;
+    const adjustedLazyInsertAt = routeShape.lazyInsertAt + routeVariable.length + 1;
+    routeBody = `${routeBody.slice(0, adjustedLazyInsertAt)}${routeShape.expressionDelimiter}${routeAssignment}${routeBody.slice(adjustedLazyInsertAt)}`;
+  }
+  let routeSource = markerExpression + routeBody;
+  const patchedRouteMarkerIndex = routeSource.indexOf("path:`/pull-requests`", markerExpression.length);
   const patchedEntryStart = patchedRouteMarkerIndex - routeShape.entryPrefix.length;
   routeSource = routeSource.slice(0, patchedEntryStart) + `${routeShape.entryPrefix}path:\`/issues\`,element:(0,${routeShape.jsxAlias}.jsx)(codexLinuxGithubIssuesRoute,{})}),` + routeSource.slice(patchedEntryStart);
   if (routeSource !== routeEntry.source) fs.writeFileSync(routeEntry.filePath, routeSource, "utf8");

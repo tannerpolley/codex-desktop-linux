@@ -12,52 +12,55 @@ function preloadBridgeProperty(ipcRendererSymbol) {
   if (typeof ipcRendererSymbol !== "string" || !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/u.test(ipcRendererSymbol)) {
     throw new TypeError("IPC renderer symbol must be a simple member expression");
   }
-  return `githubIssues:{request:e=>${ipcRendererSymbol}.invoke(\`${CHANNEL}\`,e)}`;
+  return `githubIssues:{request:request=>${ipcRendererSymbol}.invoke(\`${CHANNEL}\`,request)}`;
+}
+
+function findObjectLiteralEnd(source, bodyStart) {
+  let depth = 1;
+  let quote = null;
+  let escaped = false;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote !== null) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "`" || character === "\"" || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") depth += 1;
+    else if (character === "}" && --depth === 0) return index;
+  }
+  return -1;
 }
 
 function findElectronBridgeExposures(source) {
-  const prefix = /([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.exposeInMainWorld\s*\(\s*`electronBridge`\s*,\s*\{/gu;
+  const prefix = /([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.exposeInMainWorld\s*\(\s*([`"'])electronBridge\2\s*,\s*(\{|[A-Za-z_$][\w$]*)/gu;
   const matches = [];
   let match;
   while ((match = prefix.exec(source)) !== null) {
-    let depth = 1;
-    let quote = null;
-    let escaped = false;
-    let end = -1;
-    for (let index = prefix.lastIndex; index < source.length; index += 1) {
-      const character = source[index];
-      if (quote !== null) {
-        if (escaped) {
-          escaped = false;
-        } else if (character === "\\") {
-          escaped = true;
-        } else if (character === quote) {
-          quote = null;
-        }
-        continue;
-      }
-      if (character === "`" || character === "\"" || character === "'") {
-        quote = character;
-        continue;
-      }
-      if (character === "{") depth += 1;
-      else if (character === "}" && --depth === 0) {
-        end = index;
-        break;
-      }
+    let bodyStart = prefix.lastIndex;
+    if (match[3] !== "{") {
+      const objectName = match[3];
+      const escapedName = objectName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+      const declarations = [...source.matchAll(new RegExp(`(?:\\b(?:const|let|var)\\s+|,)${escapedName}=\\{`, "gu"))];
+      if (declarations.length !== 1) continue;
+      bodyStart = declarations[0].index + declarations[0][0].length;
     }
+    const end = findObjectLiteralEnd(source, bodyStart);
     if (end === -1) continue;
-    const bodyStart = prefix.lastIndex;
     const body = source.slice(bodyStart, end);
     matches.push({ body, bodyStart, bodyEnd: end, receiver: match[1] });
-    prefix.lastIndex = end + 1;
   }
   return matches;
 }
 
 function applyPreloadBridgePatch(source) {
   if (typeof source !== "string") throw new TypeError("preload source must be a string");
-  if (source.includes(`${BRIDGE_MARKER}=`) || source.includes(`githubIssues:{request:e=>`)) return source;
+  if (source.includes(`${BRIDGE_MARKER}=`) || source.includes("githubIssues:{request:")) return source;
 
   const candidates = findElectronBridgeExposures(source)
     .filter(({ body }) => /(?:^|,)\s*getSentryInitOptions\s*(?::|\()/u.test(body))
@@ -83,9 +86,12 @@ function applyPreloadBridgePatch(source) {
   return `${source.slice(0, candidate.bodyEnd)}${separator}${property}${source.slice(candidate.bodyEnd)}`;
 }
 
-function mainBridgeSource(ipcMainSymbol = "ipcMain") {
+function mainBridgeSource(ipcMainSymbol = "ipcMain", trustedEventSymbol = null) {
   if (typeof ipcMainSymbol !== "string" || !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/u.test(ipcMainSymbol)) {
     throw new TypeError("IPC main symbol must be a simple member expression");
+  }
+  if (trustedEventSymbol !== null && (typeof trustedEventSymbol !== "string" || !/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/u.test(trustedEventSymbol))) {
+    throw new TypeError("trusted IPC event symbol must be a simple member expression");
   }
   return `(function(){
 const ${BRIDGE_MARKER}=${VERSION};
@@ -178,24 +184,31 @@ async function codexLinuxGithubIssuesHandle(raw){
   if(request.operation===\`cancel\`){const target=request.input.targetRequestId;const child=codexLinuxGithubIssuesPending.get(target);if(child==null)return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`not-found\`,\`Request is not running\`));codexLinuxGithubIssuesTerminate(child);return codexLinuxGithubIssuesResponse(request.requestId,true,{cancelled:target},null)}
   return codexLinuxGithubIssuesRun(request)
 }
-${ipcMainSymbol}.handle(codexLinuxGithubIssuesChannel,async(_event,request)=>codexLinuxGithubIssuesHandle(request));
+${ipcMainSymbol}.handle(codexLinuxGithubIssuesChannel,async(event,request)=>{${trustedEventSymbol === null ? "" : `if(!${trustedEventSymbol}(event))return;`}return codexLinuxGithubIssuesHandle(request)});
 })();`;
 }
 
 function applyMainBridgePatch(source) {
   if (typeof source !== "string") throw new TypeError("main source must be a string");
   if (source.includes(`${BRIDGE_MARKER}=`) || source.includes(`\`${CHANNEL}\``)) return source;
-  const anchors = [...source.matchAll(/((?:[A-Za-z_$][\w$]*\.)*ipcMain)\.handle\s*\(\s*`codex_desktop:check-for-updates`/gu)];
-  if (anchors.length !== 1) {
-    warn(
-      anchors.length === 0 ? "Could not identify an existing ipcMain.handle registration" : `Found ${anchors.length} ipcMain.handle registrations`,
-      "GitHub Issues main bridge patch",
+  const channelAssignments = [...source.matchAll(/([A-Za-z_$][\w$]*)=`codex_desktop:message-from-view`/gu)];
+  if (channelAssignments.length === 1) {
+    const channelSymbol = channelAssignments[0][1].replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const trustedHandler = new RegExp(
+      `((?:[A-Za-z_$][\\w$]*\\.)*ipcMain)\\.handle\\s*\\(\\s*${channelSymbol}\\s*,\\s*async\\s*\\(\\s*([A-Za-z_$][\\w$]*)\\s*,\\s*([A-Za-z_$][\\w$]*)\\s*\\)\\s*=>\\s*\\{\\s*if\\(\\s*!([A-Za-z_$][\\w$]*)\\(\\s*\\2\\s*\\)\\s*\\)\\s*return\\s*;`,
+      "gu",
     );
-    return source;
+    const trustedAnchors = [...source.matchAll(trustedHandler)];
+    if (trustedAnchors.length === 1) {
+      const ipcMainSymbol = trustedAnchors[0][1];
+      const trustedEventSymbol = trustedAnchors[0][4];
+      const insertAt = trustedAnchors[0].index;
+      return `${source.slice(0, insertAt)}${mainBridgeSource(ipcMainSymbol, trustedEventSymbol)}${source.slice(insertAt)}`;
+    }
   }
-  const ipcMainSymbol = anchors[0][1];
-  const insertAt = anchors[0].index;
-  return `${source.slice(0, insertAt)}${mainBridgeSource(ipcMainSymbol)}${source.slice(insertAt)}`;
+
+  warn("Could not identify an existing trusted ipcMain.handle registration", "GitHub Issues main bridge patch");
+  return source;
 }
 
 module.exports = {

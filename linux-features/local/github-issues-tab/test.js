@@ -195,7 +195,7 @@ function writeIssueAssetFixture() {
     "const React={lazy:fn=>fn};const components={Button:null};const Markdown=null;const openExternal=()=>{};",
     "const PullRequestsRoute=React.lazy(()=>import(`./pull-request-route.js`));",
     "const routes=(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(oa,{path:`/pull-requests`,element:(0,Q.jsx)(PullRequestsRoute,{})}),(0,Q.jsx)(oa,{path:`/library`,element:(0,Q.jsx)(AJ,{})})]});",
-    "const nav=(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})});",
+    "const nav=b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null;",
   ].join(""), "utf8");
   fs.writeFileSync(path.join(assetsDir, "shared.js"), [
     "const React={lazy:fn=>fn};const components={Button:null};const Markdown=()=>null;const openExternal=()=>{};",
@@ -226,7 +226,12 @@ test("Issues route patch is transactional, idempotent, and wires captured depend
     assert.equal(navigation.matched, true);
     assert.equal(navigation.changed, 1);
     const nav = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
-    assert.match(nav, /sidebarElectron\.issuesRouteNavLink/);
+    const originalPullRequestsNav = "b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null";
+    assert.equal(nav.split(originalPullRequestsNav).length - 1, 1);
+    assert.equal((nav.match(/sidebarElectron\.pullRequestsRouteNavLink/g) ?? []).length, 1);
+    assert.equal((nav.match(/isActive:s\.pathname\.startsWith\(`\/pull-requests`\)/g) ?? []).length, 1);
+    assert.equal((nav.match(/sidebarElectron\.issuesRouteNavLink/g) ?? []).length, 1);
+    assert.equal((nav.match(/isActive:s\.pathname\.startsWith\(`\/issues`\)/g) ?? []).length, 1);
     assert.match(nav, /defaultMessage:`Issues`/);
     assert.match(nav, /circle-dot-current\.js/);
     const after = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));

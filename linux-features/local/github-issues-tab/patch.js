@@ -186,6 +186,32 @@ function captureNavShape(source) {
   return { start, end, block };
 }
 
+function captureNavContainer(source, navShape) {
+  const before = source.slice(0, navShape.start);
+  const conditional = before.match(/([A-Za-z_$][\w$]*)\?\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{electron:!0,children:$/);
+  if (conditional == null) return null;
+  const callStart = before.lastIndexOf("(");
+  let depth = 0;
+  let callEnd = -1;
+  for (let index = callStart; index < source.length; index += 1) {
+    if (source[index] === "(") depth += 1;
+    else if (source[index] === ")") {
+      depth -= 1;
+      if (depth === 0) {
+        callEnd = index + 1;
+        break;
+      }
+    }
+  }
+  if (callEnd === -1 || source.slice(callEnd, callEnd + 5) !== ":null") return null;
+  return {
+    end: callEnd + 5,
+    condition: conditional[1],
+    jsxAlias: conditional[2],
+    component: conditional[3],
+  };
+}
+
 function findCircleDotImport(entries) {
   const matches = entries.filter(({ name, source }) =>
     /^circle-dot-(?!dashed-).*\.js$/.test(name) && /export\{[^}]+ as default\}/.test(source),
@@ -309,7 +335,13 @@ function patchIssuesNavigationAssets(extractedDir) {
     .replace("defaultMessage:`Pull requests`", "defaultMessage:`Issues`")
     .replace("description:`Nav link that opens the pull requests route`", "description:`Nav link that opens the Issues route`");
   const sourceOffset = patched.length - navEntry.source.length;
-  patched = `${patched.slice(0, navShape.start + sourceOffset)}${issuesBlock}${patched.slice(navShape.end + sourceOffset)};/*${ISSUES_NAV_MARKER}*/`;
+  const navContainer = captureNavContainer(navEntry.source, navShape);
+  if (navContainer == null) {
+    patched = `${patched.slice(0, navShape.end + sourceOffset)},${issuesBlock}${patched.slice(navShape.end + sourceOffset)}`;
+  } else {
+    const issuesContainer = `${navContainer.condition}?(0,${navContainer.jsxAlias}.jsx)(${navContainer.component},{electron:!0,children:${issuesBlock}}):null`;
+    patched = `${patched.slice(0, navContainer.end + sourceOffset)},${issuesContainer}${patched.slice(navContainer.end + sourceOffset)}`;
+  }
   fs.writeFileSync(navEntry.filePath, patched, "utf8");
   return { matched: true, changed: 1 };
 }

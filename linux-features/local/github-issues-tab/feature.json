@@ -1,0 +1,12 @@
+{
+  "id": "github-issues-tab",
+  "title": "GitHub Issues Tab",
+  "description": "Local read-only GitHub Issues inbox and timeline beside Pull Requests.",
+  "defaultEnabled": false,
+  "entrypoints": { "patchDescriptors": "./patch.js" },
+  "resources": [
+    { "source": "issues-adapter.js", "target": ".codex-linux/features/github-issues-tab/issues-adapter.js", "mode": "0644" },
+    { "source": "protocol.js", "target": ".codex-linux/features/github-issues-tab/protocol.js", "mode": "0644" },
+    { "source": "renderer.mjs", "target": "content/webview/github-issues-tab.mjs", "mode": "0644" }
+  ]
+}

@@ -167,6 +167,16 @@ test("runOperation sanitizes missing CLI and GraphQL authorization/rate-limit fa
   }
 });
 
+test("runOperation maps GraphQL exit code 4 to sanitized auth-required", async () => {
+  await assert.rejects(
+    runOperation({ version: 1, requestId: "exit-four", operation: "capabilities", input: { host: "github.com" } }, {
+      spawn: fakeSpawn([VERSION, AUTH, { code: 4 }], []),
+      ghPath: "gh",
+    }),
+    (error) => error?.type === "auth-required" && !error.message.includes("4"),
+  );
+});
+
 test("version gate rejects old and malformed GitHub CLI before auth or GraphQL", async () => {
   for (const stdout of ["gh version 2.80.0\n", "gh version 2.45.0\n", "not-semver\n"]) {
     const calls = [];

@@ -207,7 +207,7 @@ function spawnJson(commandArgs, deps = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
     child.on("close", (code) => {
       if (settled) return;
       if (code !== 0) {
-        const type = classifyMessage(stderr, commandArgs[0] === "auth" ? "auth-required" : "adapter-failed");
+        const type = code === 4 ? "auth-required" : classifyMessage(stderr, commandArgs[0] === "auth" ? "auth-required" : "adapter-failed");
         finish(reject, fixedError(type, type === "auth-required" ? "GitHub CLI authentication is required" : type === "unauthorized" ? "GitHub authorization was denied" : type === "offline" ? "GitHub could not be reached" : type === "rate-limited" ? "GitHub API rate limit reached" : "GitHub CLI request failed"));
         return;
       }

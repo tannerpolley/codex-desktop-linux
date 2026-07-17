@@ -64,14 +64,14 @@
             "id": "milestone-1",
             "createdAt": "2026-07-10T06:00:00Z",
             "actor": { "login": "maintainer" },
-            "milestone": { "title": "v1", "number": 1, "state": "OPEN", "dueOn": "2026-08-01T00:00:00Z" }
+            "milestoneTitle": "v1"
           },
           {
             "__typename": "DemilestonedEvent",
             "id": "milestone-2",
             "createdAt": "2026-07-10T07:00:00Z",
             "actor": { "login": "maintainer" },
-            "milestone": null
+            "milestoneTitle": null
           },
           {
             "__typename": "ClosedEvent",
@@ -114,7 +114,14 @@
             "createdAt": "2026-07-10T13:00:00Z",
             "actor": { "login": "maintainer" },
             "fromRepository": { "nameWithOwner": "old/codex" },
-            "toRepository": { "nameWithOwner": "openai/codex" }
+            "issue": {
+              "__typename": "Issue",
+              "id": "issue-1",
+              "number": 42,
+              "title": "Improve parser errors",
+              "url": "https://github.com/openai/codex/issues/42",
+              "repository": { "nameWithOwner": "openai/codex" }
+            }
           },
           {
             "__typename": "FutureIssueEvent",

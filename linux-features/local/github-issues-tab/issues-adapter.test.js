@@ -44,6 +44,21 @@ test("normalizeIssue removes GraphQL shape from renderer data", () => {
   assert.equal(issue.commentCount, 4);
 });
 
+test("detail and timeline documents use schema-valid timeline union selections", () => {
+  for (const query of [QUERIES.detail, QUERIES.timeline]) {
+    assert.match(query, /assignee \{\s+__typename/);
+    for (const concreteType of ["Bot", "Mannequin", "Organization", "User"]) {
+      assert.match(query, new RegExp(`\\.\\.\\. on ${concreteType} \\{\\s+login\\s+\\}`));
+    }
+    assert.match(query, /milestoneTitle/);
+    assert.doesNotMatch(query, /\.\.\. on MilestonedEvent \{ id createdAt actor \{ login \} milestone \{/);
+    assert.doesNotMatch(query, /\.\.\. on DemilestonedEvent \{ id createdAt actor \{ login \} milestone \{/);
+    assert.match(query, /issue \{[\s\S]*repository \{ nameWithOwner \}/);
+    assert.doesNotMatch(query, /toRepository/);
+    assert.match(query, /nodes \{\s+__typename\s+\.\.\. on Node \{ id \}/);
+  }
+});
+
 for (const [type, expectedKind] of [
   ["IssueComment", "comment"],
   ["LabeledEvent", "label"],
@@ -82,6 +97,17 @@ test("timeline normalization tolerates deleted actors and private references", (
   const missingAssignee = structuredClone(byType.AssignedEvent);
   delete missingAssignee.assignee;
   assert.equal(normalizeTimelineItem(missingAssignee, "github.com").assignee, null);
+});
+
+test("timeline normalizers map schema-valid milestone and transfer fields", () => {
+  assert.deepEqual(normalizeTimelineItem(byType.MilestonedEvent, "github.com").milestone, {
+    title: "v1",
+    number: null,
+    state: null,
+    dueOn: null,
+  });
+  assert.equal(normalizeTimelineItem(byType.TransferredEvent, "github.com").fromRepository, "old/codex");
+  assert.equal(normalizeTimelineItem(byType.TransferredEvent, "github.com").issue.repository, "openai/codex");
 });
 
 function fakeSpawn(responses, calls) {

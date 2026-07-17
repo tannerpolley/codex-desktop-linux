@@ -58,13 +58,36 @@ const QUERIES = Object.freeze({
       timelineItems(first: 50, after: $cursor) {
         nodes {
           __typename
+          ... on Node { id }
           ... on IssueComment { id createdAt author { login } body }
           ... on LabeledEvent { id createdAt actor { login } label { name color description } }
           ... on UnlabeledEvent { id createdAt actor { login } label { name color description } }
-          ... on AssignedEvent { id createdAt actor { login } assignee { login } }
-          ... on UnassignedEvent { id createdAt actor { login } assignee { login } }
-          ... on MilestonedEvent { id createdAt actor { login } milestone { title number state dueOn } }
-          ... on DemilestonedEvent { id createdAt actor { login } milestone { title number state dueOn } }
+          ... on AssignedEvent {
+            id
+            createdAt
+            actor { login }
+            assignee {
+              __typename
+              ... on Bot { login }
+              ... on Mannequin { login }
+              ... on Organization { login }
+              ... on User { login }
+            }
+          }
+          ... on UnassignedEvent {
+            id
+            createdAt
+            actor { login }
+            assignee {
+              __typename
+              ... on Bot { login }
+              ... on Mannequin { login }
+              ... on Organization { login }
+              ... on User { login }
+            }
+          }
+          ... on MilestonedEvent { id createdAt actor { login } milestoneTitle }
+          ... on DemilestonedEvent { id createdAt actor { login } milestoneTitle }
           ... on ClosedEvent { id createdAt actor { login } stateReason }
           ... on ReopenedEvent { id createdAt actor { login } }
           ... on RenamedTitleEvent { id createdAt actor { login } previousTitle currentTitle }
@@ -84,7 +107,7 @@ const QUERIES = Object.freeze({
             createdAt
             actor { login }
             fromRepository { nameWithOwner }
-            toRepository { nameWithOwner }
+            issue { __typename id number title url repository { nameWithOwner } }
           }
         }
         pageInfo { hasNextPage endCursor }
@@ -100,13 +123,36 @@ const QUERIES = Object.freeze({
       timelineItems(first: 50, after: $cursor) {
         nodes {
           __typename
+          ... on Node { id }
           ... on IssueComment { id createdAt author { login } body }
           ... on LabeledEvent { id createdAt actor { login } label { name color description } }
           ... on UnlabeledEvent { id createdAt actor { login } label { name color description } }
-          ... on AssignedEvent { id createdAt actor { login } assignee { login } }
-          ... on UnassignedEvent { id createdAt actor { login } assignee { login } }
-          ... on MilestonedEvent { id createdAt actor { login } milestone { title number state dueOn } }
-          ... on DemilestonedEvent { id createdAt actor { login } milestone { title number state dueOn } }
+          ... on AssignedEvent {
+            id
+            createdAt
+            actor { login }
+            assignee {
+              __typename
+              ... on Bot { login }
+              ... on Mannequin { login }
+              ... on Organization { login }
+              ... on User { login }
+            }
+          }
+          ... on UnassignedEvent {
+            id
+            createdAt
+            actor { login }
+            assignee {
+              __typename
+              ... on Bot { login }
+              ... on Mannequin { login }
+              ... on Organization { login }
+              ... on User { login }
+            }
+          }
+          ... on MilestonedEvent { id createdAt actor { login } milestoneTitle }
+          ... on DemilestonedEvent { id createdAt actor { login } milestoneTitle }
           ... on ClosedEvent { id createdAt actor { login } stateReason }
           ... on ReopenedEvent { id createdAt actor { login } }
           ... on RenamedTitleEvent { id createdAt actor { login } previousTitle currentTitle }
@@ -126,7 +172,7 @@ const QUERIES = Object.freeze({
             createdAt
             actor { login }
             fromRepository { nameWithOwner }
-            toRepository { nameWithOwner }
+            issue { __typename id number title url repository { nameWithOwner } }
           }
         }
         pageInfo { hasNextPage endCursor }
@@ -241,6 +287,9 @@ function normalizeLabel(value) {
 }
 
 function normalizeMilestone(value) {
+  if (typeof value === "string") {
+    return { title: value, number: null, state: null, dueOn: null };
+  }
   if (!isRecord(value)) return null;
   return {
     title: stringOrNull(value.title),
@@ -313,7 +362,7 @@ function normalizeTimelineItem(node, host) { // host is part of the adapter cont
         ...base,
         kind: "milestone",
         action: type === "MilestonedEvent" ? "milestoned" : "demilestoned",
-        milestone: normalizeMilestone(node.milestone),
+        milestone: normalizeMilestone(node.milestone ?? node.milestoneTitle),
       };
     case "ClosedEvent":
     case "ReopenedEvent":
@@ -339,7 +388,7 @@ function normalizeTimelineItem(node, host) { // host is part of the adapter cont
         ...base,
         kind: "transfer",
         fromRepository: normalizeRepository(node.fromRepository),
-        toRepository: normalizeRepository(node.toRepository),
+        issue: normalizeReference(node.issue),
       };
     default:
       return base;

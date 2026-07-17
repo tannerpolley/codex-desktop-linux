@@ -1,0 +1,6 @@
+{
+  "data": {
+    "viewer": { "login": "octocat" },
+    "rateLimit": { "cost": 1, "remaining": 4999, "resetAt": "2026-07-17T18:00:00Z" }
+  }
+}

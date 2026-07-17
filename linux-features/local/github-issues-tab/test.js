@@ -407,6 +407,29 @@ test("main bridge keeps cancelled ownership until the original child settles", a
   children[1].emit("close", null, "SIGTERM");
 });
 
+test("main bridge rejects a cancel envelope whose id is already in flight", async () => {
+  const child = fakeChild();
+  const handler = createBridgeVm(() => child);
+  const original = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "same" }));
+  await Promise.resolve();
+  const duplicateCancel = await handler({}, handler.toVm({
+    version: 1,
+    requestId: "same",
+    operation: "cancel",
+    input: { targetRequestId: "same" },
+  }));
+  assert.equal(duplicateCancel.error.code, "duplicate-request");
+  assert.equal(child.killed, false);
+  const uniqueCancel = await handler({}, handler.toVm({
+    version: 1,
+    requestId: "cancel-same",
+    operation: "cancel",
+    input: { targetRequestId: "same" },
+  }));
+  assert.equal(uniqueCancel.ok, true);
+  await original;
+});
+
 test("main bridge clones adapter __proto__ data without prototype pollution", async () => {
   const child = fakeChild();
   const handler = createBridgeVm(() => child);

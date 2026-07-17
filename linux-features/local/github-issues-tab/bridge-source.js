@@ -174,8 +174,8 @@ async function codexLinuxGithubIssuesRun(request){
 }
 async function codexLinuxGithubIssuesHandle(raw){
   let request;try{request=codexLinuxGithubIssuesValidate(raw)}catch(error){return codexLinuxGithubIssuesResponse(raw?.requestId,false,null,codexLinuxGithubIssuesError(\`invalid-request\`,\`Invalid GitHub Issues request\`))}
-  if(request.operation===\`cancel\`){const target=request.input.targetRequestId;const child=codexLinuxGithubIssuesPending.get(target);if(child==null)return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`not-found\`,\`Request is not running\`));codexLinuxGithubIssuesTerminate(child);return codexLinuxGithubIssuesResponse(request.requestId,true,{cancelled:target},null)}
   if(codexLinuxGithubIssuesPending.has(request.requestId))return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`duplicate-request\`,\`Request id is already running\`));
+  if(request.operation===\`cancel\`){const target=request.input.targetRequestId;const child=codexLinuxGithubIssuesPending.get(target);if(child==null)return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`not-found\`,\`Request is not running\`));codexLinuxGithubIssuesTerminate(child);return codexLinuxGithubIssuesResponse(request.requestId,true,{cancelled:target},null)}
   return codexLinuxGithubIssuesRun(request)
 }
 ${ipcMainSymbol}.handle(codexLinuxGithubIssuesChannel,async(_event,request)=>codexLinuxGithubIssuesHandle(request));

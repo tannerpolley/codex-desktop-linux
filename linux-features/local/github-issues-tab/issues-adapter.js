@@ -7,6 +7,7 @@ const { LIMITS, validateEnvelope } = require("./protocol.js");
 const MAX_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MIN_GH_VERSION = Object.freeze([2, 81, 0]);
 
 const QUERIES = Object.freeze({
   capabilities: "query CodexLinuxIssuesCapabilities { viewer { login } rateLimit { cost remaining resetAt } }",
@@ -136,6 +137,22 @@ function classifyGraphQLErrors(errors) {
   return null;
 }
 
+function parseVersion(value) {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/u);
+  if (!match) return null;
+  return match.slice(1, 4).map(Number);
+}
+
+function isSupportedVersion(version) {
+  const parsed = parseVersion(version);
+  if (parsed === null) return false;
+  for (let index = 0; index < MIN_GH_VERSION.length; index += 1) {
+    if (parsed[index] !== MIN_GH_VERSION[index]) return parsed[index] > MIN_GH_VERSION[index];
+  }
+  return true;
+}
+
 function spawnJson(commandArgs, deps = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const spawn = deps.spawn || defaultSpawn;
   const ghPath = deps.ghPath || "gh";
@@ -165,7 +182,6 @@ function spawnJson(commandArgs, deps = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
       finish(reject, fixedError("offline", "GitHub could not be reached"));
       try { child.kill("SIGTERM"); } catch {}
     }, timeoutMs);
-    timer.unref?.();
     child.stdout.on("data", (chunk) => {
       if (settled) return;
       const text = Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
@@ -222,17 +238,27 @@ async function callGh(args, payload, deps, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return spawnJson(args, { ...deps, stdinPayload: payload === undefined ? undefined : JSON.stringify(payload) }, deps.timeoutMs || timeoutMs);
 }
 
+async function ensureGhVersion(deps) {
+  const response = await callGh(["version", "--json", "version"], undefined, deps);
+  if (!isSupportedVersion(response.version)) throw fixedError("gh-upgrade-required", "GitHub CLI 2.81.0 or newer is required");
+}
+
+function authenticatedEntry(value) {
+  if (!isRecord(value)) return false;
+  if (value.isAuthenticated === false || value.authenticated === false) return false;
+  return value.active === true || value.isAuthenticated === true || value.authenticated === true;
+}
+
 function authEntries(payload) {
   if (Array.isArray(payload?.hosts)) {
-    return payload.hosts.filter(isRecord).map((value) => ({ host: value.host, value })).filter(({ host }) => typeof host === "string" && host.length > 0);
+    return payload.hosts.filter(authenticatedEntry).map((value) => ({ host: value.host, value })).filter(({ host }) => typeof host === "string" && host.length > 0);
   }
   if (!isRecord(payload?.hosts)) return [];
   const entries = [];
   for (const [host, raw] of Object.entries(payload.hosts)) {
     const values = Array.isArray(raw) ? raw : [raw];
     for (const value of values) {
-      if (!isRecord(value)) continue;
-      if (value.isAuthenticated === false || value.authenticated === false) continue;
+      if (!authenticatedEntry(value)) continue;
       entries.push({ host, value });
     }
   }
@@ -248,7 +274,11 @@ async function resolveHost(requestedHost, deps) {
     if (!selected) throw fixedError("auth-required", "The requested GitHub host is not authenticated");
     return selected.host;
   }
-  return entries.find(({ value }) => value.active === true)?.host || entries[0].host;
+  const active = entries.find(({ value }) => value.active === true);
+  if (active) return active.host;
+  const authenticated = entries.find(({ value }) => authenticatedEntry(value));
+  if (authenticated) return authenticated.host;
+  throw fixedError("auth-required", "No active authenticated GitHub host is available");
 }
 
 function rateLimit(value) {
@@ -289,9 +319,10 @@ async function listIssues(input, deps) {
   const response = await callGh(["api", "graphql", "--hostname", host, "--input", "-"], { query: QUERIES.list, variables: { search, cursor: input.cursor } }, deps);
   const category = classifyGraphQLErrors(response.errors);
   const searchData = response.data?.search;
-  if (!isRecord(searchData) || !Array.isArray(searchData.nodes) || !isRecord(searchData.pageInfo)) {
+  if (!isRecord(searchData) || !Array.isArray(searchData.nodes)) {
     throw fixedError(category || "invalid-response", category === "rate-limited" ? "GitHub API rate limit reached" : category === "unauthorized" ? "GitHub authorization was denied" : "GitHub Issues response is incomplete");
   }
+  const pageInfo = isRecord(searchData.pageInfo) ? searchData.pageInfo : { hasNextPage: false, endCursor: null };
   const seen = new Set();
   const issues = [];
   for (const node of searchData.nodes) {
@@ -304,8 +335,8 @@ async function listIssues(input, deps) {
     viewerLogin: capabilities.viewerLogin,
     issues,
     pageInfo: {
-      hasNextPage: searchData.pageInfo.hasNextPage === true,
-      endCursor: stringOrNull(searchData.pageInfo.endCursor),
+      hasNextPage: pageInfo.hasNextPage === true,
+      endCursor: stringOrNull(pageInfo.endCursor),
     },
     rateLimit: rateLimit(response.data.rateLimit),
     warnings: warningList(response.errors),
@@ -319,6 +350,7 @@ async function runOperation(envelope, deps = {}) {
   } catch {
     throw fixedError("invalid-response", "Invalid adapter request");
   }
+  await ensureGhVersion(deps);
   if (normalized.operation === "capabilities") return fetchCapabilities(await resolveHost(normalized.input.host, deps), deps);
   if (normalized.operation === "listIssues") return listIssues(normalized.input, deps);
   throw fixedError("adapter-failed", "Adapter operation is not available");
@@ -351,7 +383,7 @@ async function runCli() {
     const data = await runOperation(request);
     process.stdout.write(`${JSON.stringify(responseFor(requestId, data, null))}\n`);
   } catch (error) {
-    const type = ["gh-missing", "auth-required", "unauthorized", "offline", "rate-limited", "invalid-response", "adapter-failed"].includes(error?.type) ? error.type : "adapter-failed";
+    const type = ["gh-missing", "gh-upgrade-required", "auth-required", "unauthorized", "offline", "rate-limited", "invalid-response", "adapter-failed"].includes(error?.type) ? error.type : "adapter-failed";
     const message = typeof error?.message === "string" && error.message.length <= 500 ? error.message : "GitHub Issues adapter failed";
     process.stdout.write(`${JSON.stringify(responseFor(requestId, null, { code: type, message }))}\n`);
   }

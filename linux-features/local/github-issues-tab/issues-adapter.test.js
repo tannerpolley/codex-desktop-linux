@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
@@ -14,6 +15,9 @@ const {
   runOperation,
   QUERIES,
 } = require("./issues-adapter.js");
+const ADAPTER_PATH = path.join(__dirname, "issues-adapter.js");
+const VERSION = { stdout: JSON.stringify({ version: "2.81.0" }) };
+const AUTH = { stdout: JSON.stringify({ hosts: { "github.com": [{ userLogin: "octocat", active: true, isAuthenticated: true }] } }) };
 
 test("buildSearchQuery creates account-scoped inbox searches", () => {
   assert.equal(buildSearchQuery({ view: "assigned", state: "open", repository: null, text: "" }, "octocat"), "is:issue assignee:octocat is:open sort:updated-desc");
@@ -50,6 +54,7 @@ function fakeSpawn(responses, calls) {
       kill() { listeners.get("close")?.(null, "SIGTERM"); },
     };
     queueMicrotask(() => {
+      if (response?.hang) return;
       if (response?.error) return listeners.get("error")?.(response.error);
       if (response?.stdout) listeners.get("stdout:data")?.(Buffer.from(response.stdout));
       if (response?.stderr) listeners.get("stderr:data")?.(Buffer.from(response.stderr));
@@ -66,7 +71,8 @@ test("runOperation resolves the active host and returns capabilities", async () 
   const calls = [];
   const data = await runOperation({ version: 1, requestId: "cap", operation: "capabilities", input: { host: null } }, {
     spawn: fakeSpawn([
-      { stdout: JSON.stringify({ hosts: { "github.com": [{ userLogin: "octocat", active: true }] } }) },
+      VERSION,
+      AUTH,
       { stdout: JSON.stringify(capabilitiesFixture) },
     ], calls),
     ghPath: "gh",
@@ -77,10 +83,11 @@ test("runOperation resolves the active host and returns capabilities", async () 
     rateLimit: { cost: 1, remaining: 4999, resetAt: "2026-07-17T18:00:00Z" },
   });
   assert.equal(calls[0].command, "gh");
-  assert.deepEqual(calls[0].args, ["auth", "status", "--json", "hosts"]);
-  assert.equal(calls[1].args[0], "api");
-  assert.equal(calls[1].args.includes("--show-token"), false);
-  assert.equal(JSON.parse(calls[1].stdin).query, QUERIES.capabilities);
+  assert.deepEqual(calls[0].args, ["version", "--json", "version"]);
+  assert.deepEqual(calls[1].args, ["auth", "status", "--json", "hosts"]);
+  assert.equal(calls[2].args[0], "api");
+  assert.equal(calls[2].args.includes("--show-token"), false);
+  assert.equal(JSON.parse(calls[2].stdin).query, QUERIES.capabilities);
 });
 
 test("runOperation lists, deduplicates, preserves partial data, and never shells text", async () => {
@@ -88,7 +95,8 @@ test("runOperation lists, deduplicates, preserves partial data, and never shells
   const literal = "$(touch nope); \"quoted\"";
   const result = await runOperation({ version: 1, requestId: "list", operation: "listIssues", input: { host: "github.com", view: "assigned", state: "open", repository: null, text: literal, cursor: "cursor-1" } }, {
     spawn: fakeSpawn([
-      { stdout: JSON.stringify({ hosts: { "github.com": [{ userLogin: "octocat", active: true }] } }) },
+      VERSION,
+      AUTH,
       { stdout: JSON.stringify(capabilitiesFixture) },
       { stdout: JSON.stringify(partialFixture) },
     ], calls),
@@ -100,7 +108,7 @@ test("runOperation lists, deduplicates, preserves partial data, and never shells
   assert.equal(result.pageInfo.hasNextPage, true);
   assert.equal(result.pageInfo.endCursor, "cursor-2");
   assert.deepEqual(result.warnings, [{ type: "FORBIDDEN", path: ["search", "nodes", 1, "title"] }]);
-  const request = JSON.parse(calls[2].stdin);
+  const request = JSON.parse(calls[3].stdin);
   assert.equal(request.variables.search.includes(literal), true);
   assert.equal(calls.some(({ command, args }) => command.includes("sh") || args.includes("-c")), false);
 });
@@ -109,7 +117,7 @@ test("runOperation keeps process output bounded and reports sanitized failures",
   const calls = [];
   await assert.rejects(
     runOperation({ version: 1, requestId: "too-big", operation: "capabilities", input: { host: "github.com" } }, {
-      spawn: fakeSpawn([{ stdout: JSON.stringify({ hosts: { "github.com": [{ active: true }] } }) }, { stdout: "x".repeat(8 * 1024 * 1024 + 1) }], calls),
+      spawn: fakeSpawn([VERSION, AUTH, { stdout: "x".repeat(8 * 1024 * 1024 + 1) }], calls),
       ghPath: "gh",
     }),
     (error) => error?.type === "invalid-response" && !error.message.includes("x".repeat(32)),
@@ -117,9 +125,125 @@ test("runOperation keeps process output bounded and reports sanitized failures",
 
   await assert.rejects(
     runOperation({ version: 1, requestId: "offline", operation: "capabilities", input: { host: "github.com" } }, {
-      spawn: fakeSpawn([{ stdout: JSON.stringify({ hosts: { "github.com": [{ active: true }] } }) }, { code: 1, stderr: `private response ${"x".repeat(100_000)}` }], []),
+      spawn: fakeSpawn([VERSION, AUTH, { code: 1, stderr: `private response ${"x".repeat(100_000)}` }], []),
       ghPath: "gh",
     }),
     (error) => error?.type === "adapter-failed" && !error.message.includes("private response"),
   );
+});
+
+test("runOperation times out a hung GitHub CLI process without leaking response data", async () => {
+  const calls = [];
+  await assert.rejects(
+    runOperation({ version: 1, requestId: "timeout", operation: "capabilities", input: { host: null } }, {
+      spawn: fakeSpawn([VERSION, { hang: true }], calls),
+      ghPath: "gh",
+      timeoutMs: 5,
+    }),
+    (error) => error?.type === "offline" && error.message === "GitHub could not be reached",
+  );
+  assert.equal(calls.length, 2);
+});
+
+test("runOperation sanitizes missing CLI and GraphQL authorization/rate-limit failures", async () => {
+  const missing = new Error("spawn gh ENOENT");
+  missing.code = "ENOENT";
+  await assert.rejects(
+    runOperation({ version: 1, requestId: "missing", operation: "capabilities", input: { host: null } }, {
+      spawn: fakeSpawn([{ error: missing }], []),
+      ghPath: "gh",
+    }),
+    (error) => error?.type === "gh-missing" && !error.message.includes("ENOENT"),
+  );
+
+  for (const [type, message] of [["UNAUTHORIZED", "forbidden"], ["RATE_LIMITED", "rate limit"]]) {
+    await assert.rejects(
+      runOperation({ version: 1, requestId: type, operation: "capabilities", input: { host: null } }, {
+        spawn: fakeSpawn([VERSION, AUTH, { stdout: JSON.stringify({ data: null, errors: [{ type, message }] }) }], []),
+        ghPath: "gh",
+      }),
+      (error) => error?.type === (type === "UNAUTHORIZED" ? "unauthorized" : "rate-limited") && !error.message.includes(message),
+    );
+  }
+});
+
+test("version gate rejects old and malformed GitHub CLI before auth or GraphQL", async () => {
+  for (const stdout of [JSON.stringify({ version: "2.80.0" }), JSON.stringify({ version: "2.45.0" }), JSON.stringify({ version: "not-semver" })]) {
+    const calls = [];
+    await assert.rejects(
+      runOperation({ version: 1, requestId: "version", operation: "capabilities", input: { host: null } }, {
+        spawn: fakeSpawn([{ stdout }], calls),
+        ghPath: "gh",
+      }),
+      (error) => error?.type === "gh-upgrade-required",
+    );
+    assert.equal(calls.length, 1);
+    assert.deepEqual(calls[0].args, ["version", "--json", "version"]);
+  }
+});
+
+test("version 2.81.0 proceeds to authenticated host discovery", async () => {
+  const calls = [];
+  const result = await runOperation({ version: 1, requestId: "version-ok", operation: "capabilities", input: { host: null } }, {
+    spawn: fakeSpawn([VERSION, AUTH, { stdout: JSON.stringify(capabilitiesFixture) }], calls),
+    ghPath: "gh",
+  });
+  assert.equal(result.viewerLogin, "octocat");
+  assert.deepEqual(calls.map(({ args }) => args[0]), ["version", "auth", "api"]);
+});
+
+test("rejects unauthenticated host entries and selects an authenticated Enterprise host", async () => {
+  for (const hosts of [
+    [{ host: "github.com", active: true, isAuthenticated: false }],
+    { "github.com": [{ active: true, authenticated: false }] },
+    { "github.com": [{ active: false }] },
+  ]) {
+    const calls = [];
+    await assert.rejects(
+      runOperation({ version: 1, requestId: "auth", operation: "capabilities", input: { host: null } }, {
+        spawn: fakeSpawn([VERSION, { stdout: JSON.stringify({ hosts }) }], calls),
+        ghPath: "gh",
+      }),
+      (error) => error?.type === "auth-required",
+    );
+    assert.equal(calls.length, 2);
+  }
+
+  const calls = [];
+  const enterpriseHosts = {
+    "github.com": [{ active: true, isAuthenticated: true }],
+    "ghe.example.com": [{ active: false, isAuthenticated: true }],
+  };
+  const result = await runOperation({ version: 1, requestId: "enterprise", operation: "capabilities", input: { host: "ghe.example.com" } }, {
+    spawn: fakeSpawn([VERSION, { stdout: JSON.stringify({ hosts: enterpriseHosts }) }, { stdout: JSON.stringify(capabilitiesFixture) }], calls),
+    ghPath: "gh",
+  });
+  assert.equal(result.host, "ghe.example.com");
+  assert.equal(calls[2].args.includes("ghe.example.com"), true);
+});
+
+test("retains usable issues when GraphQL pageInfo is null", async () => {
+  const partialPage = structuredClone(partialFixture);
+  partialPage.data.search.pageInfo = null;
+  partialPage.errors = [{ type: "FIELD_ERROR", path: ["search", "pageInfo"] }];
+  const calls = [];
+  const result = await runOperation({ version: 1, requestId: "partial-page", operation: "listIssues", input: { host: "github.com", view: "assigned", state: "open", repository: null, text: "", cursor: null } }, {
+    spawn: fakeSpawn([VERSION, AUTH, { stdout: JSON.stringify(capabilitiesFixture) }, { stdout: JSON.stringify(partialPage) }], calls),
+    ghPath: "gh",
+  });
+  assert.equal(result.issues.length, 1);
+  assert.deepEqual(result.pageInfo, { hasNextPage: false, endCursor: null });
+  assert.deepEqual(result.warnings, [{ type: "FIELD_ERROR", path: ["search", "pageInfo"] }]);
+});
+
+test("CLI emits the required sanitized response envelope", () => {
+  const result = spawnSync(process.execPath, [ADAPTER_PATH], { input: "not-json", encoding: "utf8" });
+  assert.equal(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    version: 1,
+    requestId: "invalid-request",
+    ok: false,
+    data: null,
+    error: { code: "invalid-response", message: "Invalid adapter request" },
+  });
 });

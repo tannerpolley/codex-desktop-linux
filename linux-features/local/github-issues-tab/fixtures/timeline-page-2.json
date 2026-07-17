@@ -1,0 +1,27 @@
+{
+  "data": {
+    "node": {
+      "__typename": "Issue",
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "id": "comment-1",
+            "createdAt": "2026-07-10T01:00:00Z",
+            "author": { "login": "octocat" },
+            "body": "I can reproduce this."
+          },
+          {
+            "__typename": "IssueComment",
+            "id": "comment-2",
+            "createdAt": "2026-07-18T01:00:00Z",
+            "author": { "login": "maintainer" },
+            "body": "A fix is ready."
+          }
+        ],
+        "pageInfo": { "hasNextPage": false, "endCursor": null }
+      }
+    },
+    "rateLimit": { "cost": 4, "remaining": 4976, "resetAt": "2026-07-17T18:00:00Z" }
+  }
+}

@@ -9,15 +9,22 @@ const test = require("node:test");
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "list-assigned.json"), "utf8"));
 const partialFixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "partial-list.json"), "utf8"));
 const capabilitiesFixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "capabilities.json"), "utf8"));
+const detailFixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "issue-detail.json"), "utf8"));
+const timelinePage2Fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "timeline-page-2.json"), "utf8"));
+const timelinePartialFixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "timeline-partial.json"), "utf8"));
 const {
   buildSearchQuery,
   normalizeIssue,
+  normalizeTimelineItem,
+  getIssue,
+  getIssueTimelinePage,
   runOperation,
   QUERIES,
 } = require("./issues-adapter.js");
 const ADAPTER_PATH = path.join(__dirname, "issues-adapter.js");
 const VERSION = { stdout: "gh version 2.81.0 (2026-07-17)\ngithub.com/cli/cli v2.81.0\n" };
 const AUTH = { stdout: JSON.stringify({ hosts: { "github.com": [{ host: "github.com", userLogin: "octocat", active: true, state: "success" }] } }) };
+const byType = Object.fromEntries(detailFixture.data.node.timelineItems.nodes.map((node) => [node.__typename, node]));
 
 test("buildSearchQuery creates account-scoped inbox searches", () => {
   assert.equal(buildSearchQuery({ view: "assigned", state: "open", repository: null, text: "" }, "octocat"), "is:issue assignee:octocat is:open sort:updated-desc");
@@ -35,6 +42,46 @@ test("normalizeIssue removes GraphQL shape from renderer data", () => {
   assert.deepEqual(issue.assignees, ["octocat"]);
   assert.deepEqual(issue.milestone, { title: "v1", number: 1, state: "OPEN", dueOn: "2026-08-01T00:00:00Z" });
   assert.equal(issue.commentCount, 4);
+});
+
+for (const [type, expectedKind] of [
+  ["IssueComment", "comment"],
+  ["LabeledEvent", "label"],
+  ["UnlabeledEvent", "label"],
+  ["AssignedEvent", "assignment"],
+  ["UnassignedEvent", "assignment"],
+  ["MilestonedEvent", "milestone"],
+  ["DemilestonedEvent", "milestone"],
+  ["ClosedEvent", "state"],
+  ["ReopenedEvent", "state"],
+  ["RenamedTitleEvent", "rename"],
+  ["ReferencedEvent", "reference"],
+  ["CrossReferencedEvent", "reference"],
+  ["TransferredEvent", "transfer"],
+  ["FutureIssueEvent", "generic"],
+]) {
+  test(`normalizes ${type}`, () => {
+    assert.equal(normalizeTimelineItem(byType[type], "github.com").kind, expectedKind);
+  });
+}
+
+test("unknown timeline nodes retain type and time", () => {
+  assert.deepEqual(normalizeTimelineItem(byType.FutureIssueEvent, "github.com"), {
+    id: "future-1",
+    kind: "generic",
+    type: "FutureIssueEvent",
+    createdAt: "2026-07-17T00:00:00Z",
+    actor: null,
+  });
+});
+
+test("timeline normalization tolerates deleted actors and private references", () => {
+  assert.equal(normalizeTimelineItem(byType.UnassignedEvent, "github.com").actor, null);
+  assert.equal(normalizeTimelineItem(byType.CrossReferencedEvent, "github.com").target, null);
+  assert.equal(normalizeTimelineItem(byType.DemilestonedEvent, "github.com").milestone, null);
+  const missingAssignee = structuredClone(byType.AssignedEvent);
+  delete missingAssignee.assignee;
+  assert.equal(normalizeTimelineItem(missingAssignee, "github.com").assignee, null);
 });
 
 function fakeSpawn(responses, calls) {
@@ -256,4 +303,65 @@ test("CLI emits the required sanitized response envelope", () => {
     data: null,
     error: { code: "invalid-response", message: "Invalid adapter request" },
   });
+});
+
+test("getIssue returns normalized metadata, Markdown body, projects, and timeline page", async () => {
+  const calls = [];
+  const result = await runOperation({ version: 1, requestId: "detail", operation: "getIssue", input: { host: "github.com", nodeId: "issue-1" } }, {
+    spawn: fakeSpawn([
+      VERSION,
+      AUTH,
+      { stdout: JSON.stringify(detailFixture) },
+    ], calls),
+    ghPath: "gh",
+  });
+  assert.equal(result.issue.id, "issue-1");
+  assert.equal(result.issue.body, "# Parser errors\n\nDetails in Markdown.");
+  assert.deepEqual(result.issue.projects, [{ id: "project-1", number: 7, title: "Parser", url: "https://github.com/orgs/openai/projects/7" }]);
+  assert.equal(result.timeline.items.length, 14);
+  assert.deepEqual(result.timeline.pageInfo, { hasNextPage: true, endCursor: "timeline-cursor-1" });
+  assert.deepEqual(result.rateLimit, { cost: 10, remaining: 4980, resetAt: "2026-07-17T18:00:00Z" });
+  assert.deepEqual(result.warnings, []);
+  const request = JSON.parse(calls[2].stdin);
+  assert.equal(request.variables.nodeId, "issue-1");
+  assert.equal(request.variables.cursor, null);
+  assert.match(request.query, /body/);
+  assert.match(request.query, /timelineItems\(first: 50, after: \$cursor\)/);
+  assert.doesNotMatch(request.query, /bodyHTML|renderedBody/);
+});
+
+test("getIssueTimelinePage returns a normalized continuation page and preserves partial items", async () => {
+  const calls = [];
+  const result = await runOperation({ version: 1, requestId: "timeline", operation: "getIssueTimelinePage", input: { host: "github.com", nodeId: "issue-1", cursor: "timeline-cursor-1" } }, {
+    spawn: fakeSpawn([
+      VERSION,
+      AUTH,
+      { stdout: JSON.stringify(timelinePartialFixture) },
+    ], calls),
+    ghPath: "gh",
+  });
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].actor, null);
+  assert.deepEqual(result.pageInfo, { hasNextPage: false, endCursor: null });
+  assert.deepEqual(result.rateLimit, { cost: 4, remaining: 4972, resetAt: "2026-07-17T18:00:00Z" });
+  assert.deepEqual(result.warnings, [{ type: "FIELD_ERROR", path: ["node", "timelineItems", "pageInfo"] }]);
+  const request = JSON.parse(calls[2].stdin);
+  assert.equal(request.variables.nodeId, "issue-1");
+  assert.equal(request.variables.cursor, "timeline-cursor-1");
+  assert.equal(request.query, QUERIES.timeline);
+});
+
+test("getIssueTimelinePage normalizes a complete second page", async () => {
+  const result = await runOperation({ version: 1, requestId: "timeline-2", operation: "getIssueTimelinePage", input: { host: "github.com", nodeId: "issue-1", cursor: "timeline-cursor-1" } }, {
+    spawn: fakeSpawn([
+      VERSION,
+      AUTH,
+      { stdout: JSON.stringify(timelinePage2Fixture) },
+    ], []),
+    ghPath: "gh",
+  });
+  assert.deepEqual(result.items.map((item) => item.id), ["comment-1", "comment-2"]);
+  assert.equal(result.items[1].kind, "comment");
+  assert.deepEqual(result.pageInfo, { hasNextPage: false, endCursor: null });
+  assert.deepEqual(result.warnings, []);
 });

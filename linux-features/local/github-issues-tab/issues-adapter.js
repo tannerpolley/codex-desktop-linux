@@ -35,9 +35,111 @@ const QUERIES = Object.freeze({
   }
   rateLimit { cost remaining resetAt }
 }`,
+  detail: `query CodexLinuxIssueDetail($nodeId: ID!, $cursor: String) {
+  node(id: $nodeId) {
+    ... on Issue {
+      __typename
+      id
+      number
+      title
+      url
+      state
+      stateReason
+      createdAt
+      updatedAt
+      body
+      author { login }
+      repository { nameWithOwner name owner { login } }
+      labels(first: 20) { nodes { name color description } }
+      assignees(first: 10) { nodes { login } }
+      milestone { title number state dueOn }
+      comments { totalCount }
+      projectItems(first: 20) { nodes { id project { id number title url } } }
+      timelineItems(first: 50, after: $cursor) {
+        nodes {
+          __typename
+          ... on IssueComment { id createdAt author { login } body }
+          ... on LabeledEvent { id createdAt actor { login } label { name color description } }
+          ... on UnlabeledEvent { id createdAt actor { login } label { name color description } }
+          ... on AssignedEvent { id createdAt actor { login } assignee { login } }
+          ... on UnassignedEvent { id createdAt actor { login } assignee { login } }
+          ... on MilestonedEvent { id createdAt actor { login } milestone { title number state dueOn } }
+          ... on DemilestonedEvent { id createdAt actor { login } milestone { title number state dueOn } }
+          ... on ClosedEvent { id createdAt actor { login } stateReason }
+          ... on ReopenedEvent { id createdAt actor { login } }
+          ... on RenamedTitleEvent { id createdAt actor { login } previousTitle currentTitle }
+          ... on ReferencedEvent { id createdAt actor { login } commit { oid message repository { nameWithOwner } } }
+          ... on CrossReferencedEvent {
+            id
+            createdAt
+            actor { login }
+            source {
+              __typename
+              ... on Issue { id number title url repository { nameWithOwner } }
+              ... on PullRequest { id number title url repository { nameWithOwner } }
+            }
+          }
+          ... on TransferredEvent {
+            id
+            createdAt
+            actor { login }
+            fromRepository { nameWithOwner }
+            toRepository { nameWithOwner }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+  rateLimit { cost remaining resetAt }
+}`,
+  timeline: `query CodexLinuxIssueTimeline($nodeId: ID!, $cursor: String) {
+  node(id: $nodeId) {
+    ... on Issue {
+      __typename
+      timelineItems(first: 50, after: $cursor) {
+        nodes {
+          __typename
+          ... on IssueComment { id createdAt author { login } body }
+          ... on LabeledEvent { id createdAt actor { login } label { name color description } }
+          ... on UnlabeledEvent { id createdAt actor { login } label { name color description } }
+          ... on AssignedEvent { id createdAt actor { login } assignee { login } }
+          ... on UnassignedEvent { id createdAt actor { login } assignee { login } }
+          ... on MilestonedEvent { id createdAt actor { login } milestone { title number state dueOn } }
+          ... on DemilestonedEvent { id createdAt actor { login } milestone { title number state dueOn } }
+          ... on ClosedEvent { id createdAt actor { login } stateReason }
+          ... on ReopenedEvent { id createdAt actor { login } }
+          ... on RenamedTitleEvent { id createdAt actor { login } previousTitle currentTitle }
+          ... on ReferencedEvent { id createdAt actor { login } commit { oid message repository { nameWithOwner } } }
+          ... on CrossReferencedEvent {
+            id
+            createdAt
+            actor { login }
+            source {
+              __typename
+              ... on Issue { id number title url repository { nameWithOwner } }
+              ... on PullRequest { id number title url repository { nameWithOwner } }
+            }
+          }
+          ... on TransferredEvent {
+            id
+            createdAt
+            actor { login }
+            fromRepository { nameWithOwner }
+            toRepository { nameWithOwner }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+  rateLimit { cost remaining resetAt }
+}`,
 });
 const CAPABILITIES_QUERY = QUERIES.capabilities;
 const LIST_QUERY = QUERIES.list;
+const DETAIL_QUERY = QUERIES.detail;
+const TIMELINE_QUERY = QUERIES.timeline;
 
 class AdapterError extends Error {
   constructor(type, message) {
@@ -113,6 +215,176 @@ function normalizeIssue(node, host) {
     assignees,
     milestone,
     commentCount: Number.isSafeInteger(node.comments?.totalCount) ? node.comments.totalCount : 0,
+  };
+}
+
+function normalizeActor(value) {
+  if (!isRecord(value) || typeof value.login !== "string" || value.login.length === 0) return null;
+  return { login: value.login };
+}
+
+function normalizeRepository(value) {
+  if (!isRecord(value)) return null;
+  const nameWithOwner = stringOrNull(value.nameWithOwner)
+    || (stringOrNull(value.owner?.login) && stringOrNull(value.name)
+      ? `${value.owner.login}/${value.name}` : null);
+  return nameWithOwner === null ? null : nameWithOwner;
+}
+
+function normalizeLabel(value) {
+  if (!isRecord(value) || typeof value.name !== "string" || value.name.length === 0) return null;
+  return {
+    name: value.name,
+    color: stringOrNull(value.color),
+    description: stringOrNull(value.description),
+  };
+}
+
+function normalizeMilestone(value) {
+  if (!isRecord(value)) return null;
+  return {
+    title: stringOrNull(value.title),
+    number: Number.isSafeInteger(value.number) ? value.number : null,
+    state: stringOrNull(value.state),
+    dueOn: stringOrNull(value.dueOn),
+  };
+}
+
+function normalizeReference(value) {
+  if (!isRecord(value)) return null;
+  if (typeof value.oid === "string" && value.oid.length > 0) {
+    return {
+      type: "commit",
+      oid: value.oid,
+      message: stringOrNull(value.message),
+      repository: normalizeRepository(value.repository),
+    };
+  }
+  const type = stringOrNull(value.__typename);
+  const id = stringOrNull(value.id);
+  const number = Number.isSafeInteger(value.number) ? value.number : null;
+  const title = stringOrNull(value.title);
+  const url = stringOrNull(value.url);
+  const repository = normalizeRepository(value.repository);
+  if ((type === null && id === null) || (id === null && number === null && title === null && url === null && repository === null)) return null;
+  return {
+    id,
+    type,
+    number,
+    title,
+    url,
+    repository,
+  };
+}
+
+function normalizeTimelineItem(node, host) { // host is part of the adapter contract for future host-aware links.
+  void host;
+  if (!isRecord(node)) throw fixedError("invalid-response", "Timeline node is not an object");
+  const type = stringOrNull(node.__typename) || "TimelineItem";
+  const base = {
+    id: stringOrNull(node.id),
+    kind: "generic",
+    type,
+    createdAt: stringOrNull(node.createdAt),
+    actor: normalizeActor(node.actor || node.author),
+  };
+  switch (type) {
+    case "IssueComment":
+      return { ...base, kind: "comment", body: stringOrNull(node.body) };
+    case "LabeledEvent":
+    case "UnlabeledEvent":
+      return {
+        ...base,
+        kind: "label",
+        action: type === "LabeledEvent" ? "labeled" : "unlabeled",
+        label: normalizeLabel(node.label),
+      };
+    case "AssignedEvent":
+    case "UnassignedEvent":
+      return {
+        ...base,
+        kind: "assignment",
+        action: type === "AssignedEvent" ? "assigned" : "unassigned",
+        assignee: normalizeActor(node.assignee),
+      };
+    case "MilestonedEvent":
+    case "DemilestonedEvent":
+      return {
+        ...base,
+        kind: "milestone",
+        action: type === "MilestonedEvent" ? "milestoned" : "demilestoned",
+        milestone: normalizeMilestone(node.milestone),
+      };
+    case "ClosedEvent":
+    case "ReopenedEvent":
+      return {
+        ...base,
+        kind: "state",
+        state: type === "ClosedEvent" ? "closed" : "reopened",
+        reason: stringOrNull(node.stateReason),
+      };
+    case "RenamedTitleEvent":
+      return {
+        ...base,
+        kind: "rename",
+        previousTitle: stringOrNull(node.previousTitle),
+        currentTitle: stringOrNull(node.currentTitle),
+      };
+    case "ReferencedEvent":
+      return { ...base, kind: "reference", target: normalizeReference(node.commit) };
+    case "CrossReferencedEvent":
+      return { ...base, kind: "reference", target: normalizeReference(node.source) };
+    case "TransferredEvent":
+      return {
+        ...base,
+        kind: "transfer",
+        fromRepository: normalizeRepository(node.fromRepository),
+        toRepository: normalizeRepository(node.toRepository),
+      };
+    default:
+      return base;
+  }
+}
+
+function normalizeProjects(node) {
+  const projectNodes = Array.isArray(node?.projectsV2?.nodes)
+    ? node.projectsV2.nodes
+    : Array.isArray(node?.projectItems?.nodes)
+      ? node.projectItems.nodes.map((item) => (isRecord(item?.project) ? item.project : item))
+      : Array.isArray(node?.projects?.nodes) ? node.projects.nodes : [];
+  return projectNodes.filter(isRecord).map((project) => ({
+    id: stringOrNull(project.id),
+    number: Number.isSafeInteger(project.number) ? project.number : null,
+    title: stringOrNull(project.title),
+    url: stringOrNull(project.url),
+  })).filter((project) => project.id !== null || project.title !== null);
+}
+
+function normalizeIssueDetail(node, host) {
+  const summary = normalizeIssue(node, host);
+  return {
+    ...summary,
+    body: stringOrNull(node.body),
+    projects: normalizeProjects(node),
+  };
+}
+
+function normalizeTimelinePage(node, host) {
+  const timeline = isRecord(node?.timelineItems) ? node.timelineItems : null;
+  const seen = new Set();
+  const items = [];
+  for (const raw of Array.isArray(timeline?.nodes) ? timeline.nodes : []) {
+    if (!isRecord(raw) || typeof raw.id !== "string" || seen.has(raw.id)) continue;
+    seen.add(raw.id);
+    try { items.push(normalizeTimelineItem(raw, host)); } catch {}
+  }
+  const pageInfo = isRecord(timeline?.pageInfo) ? timeline.pageInfo : {};
+  return {
+    items,
+    pageInfo: {
+      hasNextPage: pageInfo.hasNextPage === true,
+      endCursor: stringOrNull(pageInfo.endCursor),
+    },
   };
 }
 
@@ -346,6 +618,45 @@ async function listIssues(input, deps) {
   };
 }
 
+async function getIssue(input, deps) {
+  const host = await resolveHost(input.host, deps);
+  const response = await callGh(["api", "graphql", "--hostname", host, "--input", "-"], {
+    query: QUERIES.detail,
+    variables: { nodeId: input.nodeId, cursor: null },
+  }, deps, 60_000);
+  const category = classifyGraphQLErrors(response.errors);
+  const node = response.data?.node;
+  if (!isRecord(node) || (node.__typename !== undefined && node.__typename !== "Issue") || typeof node.id !== "string") {
+    throw fixedError(category || "invalid-response", category === "rate-limited" ? "GitHub API rate limit reached" : category === "unauthorized" ? "GitHub authorization was denied" : "GitHub Issue response is incomplete");
+  }
+  const timeline = normalizeTimelinePage(node, host);
+  return {
+    issue: normalizeIssueDetail(node, host),
+    timeline,
+    rateLimit: rateLimit(response.data.rateLimit),
+    warnings: warningList(response.errors),
+  };
+}
+
+async function getIssueTimelinePage(input, deps) {
+  const host = await resolveHost(input.host, deps);
+  const response = await callGh(["api", "graphql", "--hostname", host, "--input", "-"], {
+    query: QUERIES.timeline,
+    variables: { nodeId: input.nodeId, cursor: input.cursor },
+  }, deps, 60_000);
+  const category = classifyGraphQLErrors(response.errors);
+  const node = response.data?.node;
+  if (!isRecord(node) || (node.__typename !== undefined && node.__typename !== "Issue") || Object.keys(node).length === 0) {
+    throw fixedError(category || "invalid-response", category === "rate-limited" ? "GitHub API rate limit reached" : category === "unauthorized" ? "GitHub authorization was denied" : "GitHub Issue timeline response is incomplete");
+  }
+  const timeline = normalizeTimelinePage(node, host);
+  return {
+    ...timeline,
+    rateLimit: rateLimit(response.data.rateLimit),
+    warnings: warningList(response.errors),
+  };
+}
+
 async function runOperation(envelope, deps = {}) {
   let normalized;
   try {
@@ -356,6 +667,8 @@ async function runOperation(envelope, deps = {}) {
   await ensureGhVersion(deps);
   if (normalized.operation === "capabilities") return fetchCapabilities(await resolveHost(normalized.input.host, deps), deps);
   if (normalized.operation === "listIssues") return listIssues(normalized.input, deps);
+  if (normalized.operation === "getIssue") return getIssue(normalized.input, deps);
+  if (normalized.operation === "getIssueTimelinePage") return getIssueTimelinePage(normalized.input, deps);
   throw fixedError("adapter-failed", "Adapter operation is not available");
 }
 
@@ -397,8 +710,13 @@ module.exports = {
   QUERIES,
   CAPABILITIES_QUERY,
   LIST_QUERY,
+  DETAIL_QUERY,
+  TIMELINE_QUERY,
   buildSearchQuery,
   normalizeIssue,
+  normalizeTimelineItem,
+  getIssue,
+  getIssueTimelinePage,
   runOperation,
   AdapterError,
 };

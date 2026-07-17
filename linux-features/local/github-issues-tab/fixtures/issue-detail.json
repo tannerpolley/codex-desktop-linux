@@ -1,0 +1,132 @@
+{
+  "data": {
+    "node": {
+      "__typename": "Issue",
+      "id": "issue-1",
+      "number": 42,
+      "title": "Improve parser errors",
+      "url": "https://github.com/openai/codex/issues/42",
+      "state": "OPEN",
+      "stateReason": null,
+      "createdAt": "2026-07-10T00:00:00Z",
+      "updatedAt": "2026-07-17T00:00:00Z",
+      "body": "# Parser errors\n\nDetails in Markdown.",
+      "author": { "login": "octocat" },
+      "repository": {
+        "nameWithOwner": "openai/codex",
+        "name": "codex",
+        "owner": { "login": "openai" }
+      },
+      "labels": { "nodes": [{ "name": "bug", "color": "d73a4a", "description": "Something is not working" }] },
+      "assignees": { "nodes": [{ "login": "octocat" }] },
+      "milestone": { "title": "v1", "number": 1, "state": "OPEN", "dueOn": "2026-08-01T00:00:00Z" },
+      "comments": { "totalCount": 2 },
+      "projectItems": { "nodes": [{ "id": "project-item-1", "project": { "id": "project-1", "number": 7, "title": "Parser", "url": "https://github.com/orgs/openai/projects/7" } }] },
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "id": "comment-1",
+            "createdAt": "2026-07-10T01:00:00Z",
+            "author": { "login": "octocat" },
+            "body": "I can reproduce this."
+          },
+          {
+            "__typename": "LabeledEvent",
+            "id": "label-1",
+            "createdAt": "2026-07-10T02:00:00Z",
+            "actor": { "login": "maintainer" },
+            "label": { "name": "bug", "color": "d73a4a", "description": "Something is not working" }
+          },
+          {
+            "__typename": "UnlabeledEvent",
+            "id": "label-2",
+            "createdAt": "2026-07-10T03:00:00Z",
+            "actor": { "login": "maintainer" },
+            "label": { "name": "needs-triage", "color": "fbca04", "description": null }
+          },
+          {
+            "__typename": "AssignedEvent",
+            "id": "assignment-1",
+            "createdAt": "2026-07-10T04:00:00Z",
+            "actor": { "login": "maintainer" },
+            "assignee": { "login": "octocat" }
+          },
+          {
+            "__typename": "UnassignedEvent",
+            "id": "assignment-2",
+            "createdAt": "2026-07-10T05:00:00Z",
+            "actor": null,
+            "assignee": null
+          },
+          {
+            "__typename": "MilestonedEvent",
+            "id": "milestone-1",
+            "createdAt": "2026-07-10T06:00:00Z",
+            "actor": { "login": "maintainer" },
+            "milestone": { "title": "v1", "number": 1, "state": "OPEN", "dueOn": "2026-08-01T00:00:00Z" }
+          },
+          {
+            "__typename": "DemilestonedEvent",
+            "id": "milestone-2",
+            "createdAt": "2026-07-10T07:00:00Z",
+            "actor": { "login": "maintainer" },
+            "milestone": null
+          },
+          {
+            "__typename": "ClosedEvent",
+            "id": "state-1",
+            "createdAt": "2026-07-10T08:00:00Z",
+            "actor": { "login": "maintainer" },
+            "stateReason": "COMPLETED"
+          },
+          {
+            "__typename": "ReopenedEvent",
+            "id": "state-2",
+            "createdAt": "2026-07-10T09:00:00Z",
+            "actor": { "login": "maintainer" }
+          },
+          {
+            "__typename": "RenamedTitleEvent",
+            "id": "rename-1",
+            "createdAt": "2026-07-10T10:00:00Z",
+            "actor": { "login": "octocat" },
+            "previousTitle": "Parser errors",
+            "currentTitle": "Improve parser errors"
+          },
+          {
+            "__typename": "ReferencedEvent",
+            "id": "reference-1",
+            "createdAt": "2026-07-10T11:00:00Z",
+            "actor": { "login": "octocat" },
+            "commit": { "oid": "abc123", "message": "Fix parser", "repository": { "nameWithOwner": "openai/codex" } }
+          },
+          {
+            "__typename": "CrossReferencedEvent",
+            "id": "reference-2",
+            "createdAt": "2026-07-10T12:00:00Z",
+            "actor": { "login": "octocat" },
+            "source": null
+          },
+          {
+            "__typename": "TransferredEvent",
+            "id": "transfer-1",
+            "createdAt": "2026-07-10T13:00:00Z",
+            "actor": { "login": "maintainer" },
+            "fromRepository": { "nameWithOwner": "old/codex" },
+            "toRepository": { "nameWithOwner": "openai/codex" }
+          },
+          {
+            "__typename": "FutureIssueEvent",
+            "id": "future-1",
+            "createdAt": "2026-07-17T00:00:00Z",
+            "actor": null,
+            "futureField": "ignored"
+          }
+        ],
+        "pageInfo": { "hasNextPage": true, "endCursor": "timeline-cursor-1" }
+      }
+    },
+    "rateLimit": { "cost": 10, "remaining": 4980, "resetAt": "2026-07-17T18:00:00Z" }
+  }
+}

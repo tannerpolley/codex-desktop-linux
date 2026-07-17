@@ -16,8 +16,8 @@ const {
   QUERIES,
 } = require("./issues-adapter.js");
 const ADAPTER_PATH = path.join(__dirname, "issues-adapter.js");
-const VERSION = { stdout: JSON.stringify({ version: "2.81.0" }) };
-const AUTH = { stdout: JSON.stringify({ hosts: { "github.com": [{ userLogin: "octocat", active: true, isAuthenticated: true }] } }) };
+const VERSION = { stdout: "gh version 2.81.0 (2026-07-17)\ngithub.com/cli/cli v2.81.0\n" };
+const AUTH = { stdout: JSON.stringify({ hosts: { "github.com": [{ host: "github.com", userLogin: "octocat", active: true, state: "success" }] } }) };
 
 test("buildSearchQuery creates account-scoped inbox searches", () => {
   assert.equal(buildSearchQuery({ view: "assigned", state: "open", repository: null, text: "" }, "octocat"), "is:issue assignee:octocat is:open sort:updated-desc");
@@ -83,7 +83,7 @@ test("runOperation resolves the active host and returns capabilities", async () 
     rateLimit: { cost: 1, remaining: 4999, resetAt: "2026-07-17T18:00:00Z" },
   });
   assert.equal(calls[0].command, "gh");
-  assert.deepEqual(calls[0].args, ["version", "--json", "version"]);
+  assert.deepEqual(calls[0].args, ["--version"]);
   assert.deepEqual(calls[1].args, ["auth", "status", "--json", "hosts"]);
   assert.equal(calls[2].args[0], "api");
   assert.equal(calls[2].args.includes("--show-token"), false);
@@ -168,7 +168,7 @@ test("runOperation sanitizes missing CLI and GraphQL authorization/rate-limit fa
 });
 
 test("version gate rejects old and malformed GitHub CLI before auth or GraphQL", async () => {
-  for (const stdout of [JSON.stringify({ version: "2.80.0" }), JSON.stringify({ version: "2.45.0" }), JSON.stringify({ version: "not-semver" })]) {
+  for (const stdout of ["gh version 2.80.0\n", "gh version 2.45.0\n", "not-semver\n"]) {
     const calls = [];
     await assert.rejects(
       runOperation({ version: 1, requestId: "version", operation: "capabilities", input: { host: null } }, {
@@ -178,7 +178,7 @@ test("version gate rejects old and malformed GitHub CLI before auth or GraphQL",
       (error) => error?.type === "gh-upgrade-required",
     );
     assert.equal(calls.length, 1);
-    assert.deepEqual(calls[0].args, ["version", "--json", "version"]);
+    assert.deepEqual(calls[0].args, ["--version"]);
   }
 });
 
@@ -189,14 +189,14 @@ test("version 2.81.0 proceeds to authenticated host discovery", async () => {
     ghPath: "gh",
   });
   assert.equal(result.viewerLogin, "octocat");
-  assert.deepEqual(calls.map(({ args }) => args[0]), ["version", "auth", "api"]);
+  assert.deepEqual(calls.map(({ args }) => args[0]), ["--version", "auth", "api"]);
 });
 
 test("rejects unauthenticated host entries and selects an authenticated Enterprise host", async () => {
   for (const hosts of [
-    [{ host: "github.com", active: true, isAuthenticated: false }],
-    { "github.com": [{ active: true, authenticated: false }] },
-    { "github.com": [{ active: false }] },
+    [{ host: "github.com", active: true, state: "error" }],
+    { "github.com": [{ host: "github.com", active: true, state: "timeout" }] },
+    { "github.com": [{ host: "github.com", active: false, state: "success" }] },
   ]) {
     const calls = [];
     await assert.rejects(
@@ -211,8 +211,8 @@ test("rejects unauthenticated host entries and selects an authenticated Enterpri
 
   const calls = [];
   const enterpriseHosts = {
-    "github.com": [{ active: true, isAuthenticated: true }],
-    "ghe.example.com": [{ active: false, isAuthenticated: true }],
+    "github.com": [{ host: "github.com", active: true, state: "success" }],
+    "ghe.example.com": [{ host: "ghe.example.com", active: true, state: "success" }],
   };
   const result = await runOperation({ version: 1, requestId: "enterprise", operation: "capabilities", input: { host: "ghe.example.com" } }, {
     spawn: fakeSpawn([VERSION, { stdout: JSON.stringify({ hosts: enterpriseHosts }) }, { stdout: JSON.stringify(capabilitiesFixture) }], calls),

@@ -137,15 +137,16 @@ function classifyGraphQLErrors(errors) {
   return null;
 }
 
-function parseVersion(value) {
+function parseVersionLine(value) {
   if (typeof value !== "string") return null;
-  const match = value.trim().match(/^v?(\d+)\.(\d+)\.(\d+)$/u);
+  const firstLine = value.split(/\r?\n/u, 1)[0];
+  const match = firstLine.match(/^gh version (\d+)\.(\d+)\.(\d+)(?:\s.*)?$/u);
   if (!match) return null;
   return match.slice(1, 4).map(Number);
 }
 
-function isSupportedVersion(version) {
-  const parsed = parseVersion(version);
+function isSupportedVersionText(versionText) {
+  const parsed = parseVersionLine(versionText);
   if (parsed === null) return false;
   for (let index = 0; index < MIN_GH_VERSION.length; index += 1) {
     if (parsed[index] !== MIN_GH_VERSION[index]) return parsed[index] > MIN_GH_VERSION[index];
@@ -210,6 +211,10 @@ function spawnJson(commandArgs, deps = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
         finish(reject, fixedError(type, type === "auth-required" ? "GitHub CLI authentication is required" : type === "unauthorized" ? "GitHub authorization was denied" : type === "offline" ? "GitHub could not be reached" : type === "rate-limited" ? "GitHub API rate limit reached" : "GitHub CLI request failed"));
         return;
       }
+      if (commandArgs[0] === "--version") {
+        finish(resolve, { text: stdout });
+        return;
+      }
       let parsed;
       try {
         parsed = JSON.parse(stdout);
@@ -239,14 +244,12 @@ async function callGh(args, payload, deps, timeoutMs = DEFAULT_TIMEOUT_MS) {
 }
 
 async function ensureGhVersion(deps) {
-  const response = await callGh(["version", "--json", "version"], undefined, deps);
-  if (!isSupportedVersion(response.version)) throw fixedError("gh-upgrade-required", "GitHub CLI 2.81.0 or newer is required");
+  const response = await callGh(["--version"], undefined, deps);
+  if (!isSupportedVersionText(response.text)) throw fixedError("gh-upgrade-required", "GitHub CLI 2.81.0 or newer is required");
 }
 
 function authenticatedEntry(value) {
-  if (!isRecord(value)) return false;
-  if (value.isAuthenticated === false || value.authenticated === false) return false;
-  return value.active === true || value.isAuthenticated === true || value.authenticated === true;
+  return isRecord(value) && value.active === true && value.state === "success";
 }
 
 function authEntries(payload) {

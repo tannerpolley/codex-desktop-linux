@@ -60,7 +60,7 @@ function applyPreloadBridgePatch(source) {
   if (source.includes(`${BRIDGE_MARKER}=`) || source.includes(`githubIssues:{request:e=>`)) return source;
 
   const candidates = findElectronBridgeExposures(source)
-    .filter(({ body }) => body.includes("getSentryInitOptions"))
+    .filter(({ body }) => /(?:^|,)\s*getSentryInitOptions\s*(?::|\()/u.test(body))
     .map((candidate) => ({
       ...candidate,
       ipcRenderer: candidate.body.match(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\.invoke\s*\(/u)?.[1] ?? null,
@@ -100,17 +100,17 @@ const codexLinuxGithubIssuesPath=require(\`node:path\`);
 const codexLinuxGithubIssuesSpawn=require(\`node:child_process\`).spawn;
 const codexLinuxGithubIssuesNodePath=codexLinuxGithubIssuesPath.join(process.resourcesPath,\`node-runtime\`,\`bin\`,\`node\`);
 const codexLinuxGithubIssuesAdapterPath=codexLinuxGithubIssuesPath.join(process.resourcesPath,\`..\`,\`.codex-linux\`,\`features\`,\`github-issues-tab\`,\`issues-adapter.js\`);
-function codexLinuxGithubIssuesRecord(value){if(value===null||typeof value!==\`object\`||Array.isArray(value))return false;const prototype=Object.getPrototypeOf(value);return prototype===null||(!Array.isArray(value)&&Object.prototype.toString.call(value)===\`[object Object]\`&&(prototype===Object.prototype||prototype.constructor?.name===\`Object\`))}
-function codexLinuxGithubIssuesString(value,max,field){if(typeof value!==\`string\`||value.length===0||value.length>max||/[\\u0000-\\u001f\\u007f-\\u009f]/u.test(value))throw Error(\`invalid \${field}\`);return value}
+function codexLinuxGithubIssuesRecord(value){if(value===null||typeof value!==\`object\`||Array.isArray(value))return false;const prototype=Object.getPrototypeOf(value);return prototype===Object.prototype||prototype===null}
+function codexLinuxGithubIssuesString(value,max,field,nonEmpty=true){if(typeof value!==\`string\`||((nonEmpty&&value.length===0)||value.length>max)||/[\\u0000-\\u001f\\u007f-\\u009f]/u.test(value))throw Error(\`invalid \${field}\`);return value}
 function codexLinuxGithubIssuesOptionalString(value,max,field){if(value===null)return null;return codexLinuxGithubIssuesString(value,max,field)}
-function codexLinuxGithubIssuesHost(value,nullable=false){if(nullable&&value===null)return;if(typeof value!==\`string\`||value.length===0||value.endsWith(\`.\`)||value.includes(\`..\`))throw Error(\`invalid host\`);const labels=value.split(\`.\`);if(labels.some((label)=>!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/u.test(label)))throw Error(\`invalid host\`)}
+function codexLinuxGithubIssuesHost(value,nullable=false){if(nullable&&value===null)return;if(typeof value!==\`string\`||value.length===0||value.length>253||value.endsWith(\`.\`)||value.includes(\`..\`))throw Error(\`invalid host\`);const labels=value.split(\`.\`);if(labels.some((label)=>!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/u.test(label)))throw Error(\`invalid host\`)}
 function codexLinuxGithubIssuesRepository(value){if(value===null)return;codexLinuxGithubIssuesString(value,200,\`repository\`);const separator=value.indexOf(\`/\`);if(separator<=0||separator!==value.lastIndexOf(\`/\`)||separator===value.length-1||!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(value.slice(0,separator))||!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(value.slice(separator+1)))throw Error(\`invalid repository\`)}
-function codexLinuxGithubIssuesFields(value,allowed){for(const key of Object.keys(value))if(!allowed.has(key))throw Error(\`unknown request field\`)}
+function codexLinuxGithubIssuesFields(value,allowed){for(const key of Reflect.ownKeys(value))if(typeof key!==\`string\`||!allowed.has(key))throw Error(\`unknown request field\`)}
 function codexLinuxGithubIssuesInput(operation,input){
   if(!codexLinuxGithubIssuesRecord(input))throw Error(\`input must be an object\`);
   if(operation===\`capabilities\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`]));codexLinuxGithubIssuesHost(input.host,true);return}
   if(operation===\`cancel\`){codexLinuxGithubIssuesFields(input,new Set([\`targetRequestId\`]));codexLinuxGithubIssuesString(input.targetRequestId,96,\`targetRequestId\`);return}
-  if(operation===\`listIssues\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`view\`,\`state\`,\`repository\`,\`text\`,\`cursor\`]));codexLinuxGithubIssuesHost(input.host);if(![\`assigned\`,\`authored\`,\`all\`].includes(input.view)||![\`open\`,\`closed\`,\`all\`].includes(input.state))throw Error(\`invalid list input\`);codexLinuxGithubIssuesRepository(input.repository);codexLinuxGithubIssuesString(input.text,500,\`text\`);codexLinuxGithubIssuesOptionalString(input.cursor,512,\`cursor\`);return}
+  if(operation===\`listIssues\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`view\`,\`state\`,\`repository\`,\`text\`,\`cursor\`]));codexLinuxGithubIssuesHost(input.host);if(![\`assigned\`,\`authored\`,\`all\`].includes(input.view)||![\`open\`,\`closed\`,\`all\`].includes(input.state))throw Error(\`invalid list input\`);codexLinuxGithubIssuesRepository(input.repository);codexLinuxGithubIssuesString(input.text,500,\`text\`,false);codexLinuxGithubIssuesOptionalString(input.cursor,512,\`cursor\`);return}
   if(operation===\`getIssue\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`nodeId\`]));codexLinuxGithubIssuesHost(input.host);codexLinuxGithubIssuesString(input.nodeId,256,\`nodeId\`);return}
   if(operation===\`getIssueTimelinePage\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`nodeId\`,\`cursor\`]));codexLinuxGithubIssuesHost(input.host);codexLinuxGithubIssuesString(input.nodeId,256,\`nodeId\`);codexLinuxGithubIssuesString(input.cursor,512,\`cursor\`);return}
   throw Error(\`invalid operation\`);
@@ -144,27 +144,34 @@ function codexLinuxGithubIssuesParsedResponse(request,stdout){
   if(parsed.ok){try{return codexLinuxGithubIssuesResponse(request.requestId,true,parsed.data,null)}catch{return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`invalid-response\`,\`Invalid adapter response\`))}}
   return codexLinuxGithubIssuesResponse(request.requestId,false,null,parsed.error);
 }
+function codexLinuxGithubIssuesTerminate(child){
+  const pid=Number(child?.pid);
+  if(Number.isSafeInteger(pid)&&pid>1){try{process.kill(-pid,\`SIGTERM\`);return}catch{}}
+  try{child?.kill()}catch{}
+}
+function codexLinuxGithubIssuesTerminateAll(){for(const child of codexLinuxGithubIssuesPending.values())codexLinuxGithubIssuesTerminate(child);codexLinuxGithubIssuesPending.clear()}
+process.on(\`exit\`,codexLinuxGithubIssuesTerminateAll);
 function codexLinuxGithubIssuesRun(request){
   let child=null;
-  try{child=codexLinuxGithubIssuesSpawn(codexLinuxGithubIssuesNodePath,[codexLinuxGithubIssuesAdapterPath],{stdio:[\`pipe\`,\`pipe\`,\`pipe\`]})}catch{return Promise.resolve(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)))}
+  try{child=codexLinuxGithubIssuesSpawn(codexLinuxGithubIssuesNodePath,[codexLinuxGithubIssuesAdapterPath],{stdio:[\`pipe\`,\`pipe\`,\`pipe\`],detached:true})}catch{return Promise.resolve(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)))}
   codexLinuxGithubIssuesPending.set(request.requestId,child);
   return new Promise((resolve)=>{
     let settled=false,stdout=\`\`,stdoutBytes=0;
     const timeoutMs=codexLinuxGithubIssuesAdapterTimeouts[request.operation]||30000;
     let timer;
     const finish=(response)=>{if(settled)return;settled=true;clearTimeout(timer);resolve(response)};
-    const kill=()=>{try{child.kill()}catch{}};
-    timer=setTimeout(()=>{finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`timeout\`,\`GitHub Issues request timed out\`)));kill()},timeoutMs);
-    child.stdout?.on(\`data\`,(chunk)=>{const text=String(chunk);stdoutBytes+=Buffer.byteLength(text,\`utf8\`);if(stdoutBytes>codexLinuxGithubIssuesMaxStdoutBytes){finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`output-limit\`,\`GitHub Issues response exceeded its size limit\`)));kill();return}stdout+=text});
-    child.stderr?.on(\`data\`,()=>{});
-    child.on(\`error\`,()=>finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`))));
+    const kill=()=>codexLinuxGithubIssuesTerminate(child);
+    timer=setTimeout(()=>{if(settled)return;finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`timeout\`,\`GitHub Issues request timed out\`)));kill()},timeoutMs);
+    child.stdout?.on(\`data\`,(chunk)=>{if(settled)return;const text=String(chunk);stdoutBytes+=Buffer.byteLength(text,\`utf8\`);if(stdoutBytes>codexLinuxGithubIssuesMaxStdoutBytes){finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`output-limit\`,\`GitHub Issues response exceeded its size limit\`)));kill();return}stdout+=text});
+    child.stderr?.on(\`data\`,()=>{if(settled)return});
+    child.on(\`error\`,()=>{if(settled)return;finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)))});
     child.on(\`close\`,(code)=>{if(settled)return;if(code!==0&&stdout.trim().length===0){finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)));return}finish(codexLinuxGithubIssuesParsedResponse(request,stdout))});
     try{child.stdin.end(JSON.stringify(request))}catch{kill();finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)))}
   });
 }
 async function codexLinuxGithubIssuesHandle(raw){
   let request;try{request=codexLinuxGithubIssuesValidate(raw)}catch(error){return codexLinuxGithubIssuesResponse(raw?.requestId,false,null,codexLinuxGithubIssuesError(\`invalid-request\`,\`Invalid GitHub Issues request\`))}
-  if(request.operation===\`cancel\`){const target=request.input.targetRequestId;const child=codexLinuxGithubIssuesPending.get(target);if(child==null)return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`not-found\`,\`Request is not running\`));try{child.kill()}catch{}return codexLinuxGithubIssuesResponse(request.requestId,true,{cancelled:target},null)}
+  if(request.operation===\`cancel\`){const target=request.input.targetRequestId;const child=codexLinuxGithubIssuesPending.get(target);if(child==null)return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`not-found\`,\`Request is not running\`));codexLinuxGithubIssuesPending.delete(target);codexLinuxGithubIssuesTerminate(child);return codexLinuxGithubIssuesResponse(request.requestId,true,{cancelled:target},null)}
   if(codexLinuxGithubIssuesPending.has(request.requestId))return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`duplicate-request\`,\`Request id is already running\`));
   try{return await codexLinuxGithubIssuesRun(request)}finally{codexLinuxGithubIssuesPending.delete(request.requestId)}
 }
@@ -175,7 +182,7 @@ ${ipcMainSymbol}.handle(codexLinuxGithubIssuesChannel,async(_event,request)=>cod
 function applyMainBridgePatch(source) {
   if (typeof source !== "string") throw new TypeError("main source must be a string");
   if (source.includes(`${BRIDGE_MARKER}=`) || source.includes(`\`${CHANNEL}\``)) return source;
-  const anchors = [...source.matchAll(/((?:[A-Za-z_$][\w$]*\.)*ipcMain)\.handle\s*\(\s*`[^`]+`/gu)];
+  const anchors = [...source.matchAll(/((?:[A-Za-z_$][\w$]*\.)*ipcMain)\.handle\s*\(\s*`codex_desktop:check-for-updates`/gu)];
   if (anchors.length !== 1) {
     warn(
       anchors.length === 0 ? "Could not identify an existing ipcMain.handle registration" : `Found ${anchors.length} ipcMain.handle registrations`,

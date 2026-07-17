@@ -181,21 +181,19 @@ test("preload descriptor scans only .vite/build JavaScript and reports optional 
 
 function createBridgeVm(spawn) {
   const handlers = new Map();
+  const processListeners = new Map();
+  const processKills = [];
   const ipcMain = { handle(channel, handler) { handlers.set(channel, handler); } };
+  const processObject = {
+    resourcesPath: "/opt/codex/resources",
+    pid: 9999,
+    kill(...args) { processKills.push(args); },
+    on(event, callback) { processListeners.set(event, callback); return processObject; },
+  };
   const context = {
     Buffer,
-    Promise,
-    Set,
-    Map,
-    Object,
-    Array,
-    JSON,
-    Error,
-    TypeError,
-    Number,
-    String,
     console,
-    process: { resourcesPath: "/opt/codex/resources" },
+    process: processObject,
     require(name) {
       if (name === "node:path") return path;
       if (name === "node:child_process") return { spawn };
@@ -207,7 +205,12 @@ function createBridgeVm(spawn) {
   };
   context.globalThis = context;
   vm.runInNewContext(mainBridgeSource("ipcMain"), context);
-  return handlers.get("codex-linux:github-issues");
+  const handler = handlers.get("codex-linux:github-issues");
+  handler.toVm = (value) => vm.runInNewContext(`JSON.parse(${JSON.stringify(JSON.stringify(value))})`, context);
+  handler.vm = (expression) => vm.runInNewContext(expression, context);
+  handler.emitExit = () => processListeners.get("exit")?.();
+  handler.processKills = processKills;
+  return handler;
 }
 
 function fakeChild() {
@@ -238,7 +241,7 @@ test("main bridge validates unknown operations before spawning", async () => {
     calls.push(true);
     return fakeChild();
   });
-  const response = await handler({}, { ...capabilitiesRequest, operation: "shell", input: {} });
+  const response = await handler({}, handler.toVm({ ...capabilitiesRequest, operation: "shell", input: {} }));
   assert.equal(response.ok, false);
   assert.equal(response.error.code, "invalid-request");
   assert.equal(calls.length, 0);
@@ -251,19 +254,19 @@ test("main bridge rejects duplicate ids and cancellation only kills its child", 
     children.push(child);
     return child;
   });
-  const first = handler({}, capabilitiesRequest);
+  const first = handler({}, handler.toVm(capabilitiesRequest));
   await Promise.resolve();
-  const duplicate = await handler({}, capabilitiesRequest);
+  const duplicate = await handler({}, handler.toVm(capabilitiesRequest));
   assert.equal(duplicate.error.code, "duplicate-request");
   const secondRequest = { ...capabilitiesRequest, requestId: "req-2" };
-  const second = handler({}, secondRequest);
+  const second = handler({}, handler.toVm(secondRequest));
   await Promise.resolve();
-  const cancellation = await handler({}, {
+  const cancellation = await handler({}, handler.toVm({
     version: 1,
     requestId: "cancel-1",
     operation: "cancel",
     input: { targetRequestId: "req-1" },
-  });
+  }));
   assert.equal(cancellation.ok, true);
   assert.equal(children[0].killed, true);
   assert.equal(children[1].killed, false);
@@ -275,12 +278,108 @@ test("main bridge rejects duplicate ids and cancellation only kills its child", 
 test("main bridge rejects adapter output above the 8 MiB cap", async () => {
   const child = fakeChild();
   const handler = createBridgeVm(() => child);
-  const request = handler({}, { ...capabilitiesRequest, requestId: "large" });
+  const request = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "large" }));
   await Promise.resolve();
   child.emitStdout(Buffer.alloc(8 * 1024 * 1024 + 1, 65));
   const response = await request;
   assert.equal(response.ok, false);
   assert.equal(response.error.code, "output-limit");
+});
+
+test("main bridge mirrors protocol records and permits empty list text", async () => {
+  const children = [];
+  const handler = createBridgeVm(() => {
+    const child = fakeChild();
+    children.push(child);
+    return child;
+  });
+  const list = {
+    version: 1,
+    requestId: "empty-text",
+    operation: "listIssues",
+    input: { host: "github.com", view: "assigned", state: "open", repository: null, text: "", cursor: null },
+  };
+  const pending = handler({}, handler.toVm(list));
+  await Promise.resolve();
+  assert.equal(children.length, 1);
+  children[0].emitStdout(JSON.stringify({ version: 1, requestId: "empty-text", ok: true, data: {}, error: null }));
+  children[0].emit("close", 0, null);
+  assert.equal((await pending).ok, true);
+
+  const invalidHost = handler.toVm({ ...list, requestId: "long-host", input: { ...list.input, host: "a".repeat(254) } });
+  const customPrototype = handler.vm(`Object.assign(Object.create({ inherited: true }), ${JSON.stringify(list)})`);
+  const inheritedField = handler.vm(`Object.assign(Object.create(null), ${JSON.stringify(list)}, { inherited: true })`);
+  for (const invalid of [invalidHost, customPrototype, inheritedField]) {
+    const response = await handler({}, invalid);
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, "invalid-request");
+  }
+  assert.equal(children.length, 1);
+});
+
+test("main patch selects exactly one trusted update handler and ignores unrelated handlers", () => {
+  const source = [
+    "electron.ipcMain.handle(`other-channel`,async e=>{});",
+    "electron.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{});",
+  ].join("\n");
+  const patched = applyMainBridgePatch(source);
+  assert.notEqual(patched, source);
+  assert.equal((patched.match(/codex-linux:github-issues/g) ?? []).length, 1);
+  const missing = "electron.ipcMain.handle(`other-channel`,async e=>{});";
+  assert.equal(applyMainBridgePatch(missing), missing);
+  const ambiguous = [
+    "electron.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{});",
+    "electron.ipcMain.handle(`codex_desktop:check-for-updates`,async e=>{});",
+  ].join("\n");
+  assert.equal(applyMainBridgePatch(ambiguous), ambiguous);
+});
+
+test("main bridge terminates only owned process groups and cleans up on exit", async () => {
+  const children = [];
+  const handler = createBridgeVm(() => {
+    const child = fakeChild();
+    child.pid = 4000 + children.length;
+    children.push(child);
+    return child;
+  });
+  const first = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "owned-1" }));
+  const second = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "owned-2" }));
+  await Promise.resolve();
+  const cancellation = await handler({}, handler.toVm({ version: 1, requestId: "cancel-owned", operation: "cancel", input: { targetRequestId: "owned-1" } }));
+  assert.equal(cancellation.ok, true);
+  assert.equal(children[0].killed, false);
+  assert.deepEqual(handler.processKills, [[-4000, "SIGTERM"]]);
+  handler.emitExit();
+  assert.deepEqual(handler.processKills, [[-4000, "SIGTERM"], [-4001, "SIGTERM"]]);
+  assert.equal(children[1].killed, false);
+  const afterExit = await handler({}, handler.toVm({ version: 1, requestId: "cancel-after-exit", operation: "cancel", input: { targetRequestId: "owned-2" } }));
+  assert.equal(afterExit.error.code, "not-found");
+  children[0].emit("close", null, "SIGTERM");
+  children[1].emit("close", null, "SIGTERM");
+  await Promise.all([first, second]);
+});
+
+test("main bridge ignores stdout and process events after settlement", async () => {
+  const child = fakeChild();
+  child.pid = 7000;
+  const handler = createBridgeVm(() => child);
+  const pending = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "settled" }));
+  await Promise.resolve();
+  child.emitStdout(JSON.stringify({ version: 1, requestId: "settled", ok: true, data: {}, error: null }));
+  child.emit("close", 0, null);
+  const response = await pending;
+  child.emitStdout(Buffer.alloc(8 * 1024 * 1024 + 1, 65));
+  child.emit("error", new Error("late"));
+  child.emit("close", 1, null);
+  assert.equal(response.ok, true);
+  assert.equal(child.killed, false);
+});
+
+test("preload patch requires an actual getSentryInitOptions property", () => {
+  const falsePositive = "bridge.exposeInMainWorld(`electronBridge`,{note:`getSentryInitOptions`,openExternal:e=>ipc.invoke(`open-external`,e)})";
+  assert.equal(applyPreloadBridgePatch(falsePositive), falsePositive);
+  const methodProperty = "bridge.exposeInMainWorld(`electronBridge`,{getSentryInitOptions(){return opts},openExternal:e=>ipc.invoke(`open-external`,e)})";
+  assert.match(applyPreloadBridgePatch(methodProperty), /githubIssues:\{request:e=>ipc\.invoke\(`codex-linux:github-issues`,e\)\}/);
 });
 
 test("preload descriptor patches one .vite/build bundle and leaves other paths untouched", () => {

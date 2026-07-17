@@ -6,7 +6,7 @@
 
 **Architecture:** A current-DMG renderer patch adds the nav item and route, while a preload/main-process patch exposes one validated `window.electronBridge.githubIssues.request` method. The main process runs a staged Node adapter that owns fixed `gh api graphql` documents and returns normalized JSON over stdio; credentials never enter the renderer.
 
-**Tech Stack:** Node.js 22 built-ins, `node:test`, Electron IPC/context bridge, React supplied by the current renderer bundle, GitHub CLI 2.45+, GitHub GraphQL API, Linux feature descriptors.
+**Tech Stack:** Node.js 22 built-ins, `node:test`, Electron IPC/context bridge, React supplied by the current renderer bundle, GitHub CLI 2.81.0+, GitHub GraphQL API, Linux feature descriptors.
 
 ## Global Constraints
 
@@ -16,6 +16,7 @@
 - The route is read-only: no task-start or GitHub mutation control may be rendered or exposed by the bridge.
 - The adapter owns every GraphQL document and invokes `gh` with `spawn`/`execFile`, never a shell.
 - Support GitHub.com and GitHub Enterprise through the selected authenticated hostname and resolved viewer login; never expose or log a token.
+- Require GitHub CLI 2.81.0 or newer and return `gh-upgrade-required` before host discovery or GraphQL work on older versions.
 - Patch descriptors are optional, idempotent, current-DMG-only, and fail soft when a semantic anchor is missing or ambiguous.
 - Substantial renderer and adapter logic stays in focused files, not one injected string in `patch.js`.
 - Unknown timeline event types render generically; missing optional fields never discard the remaining Issue or timeline.
@@ -107,7 +108,7 @@ Use this manifest exactly:
 }
 ```
 
-The README must state: current-DMG-only, local/ignored, GitHub CLI auth required, read-only behavior, the enablement JSON, the explicit test commands, and the disable/rebuild procedure.
+The README must state: current-DMG-only, local/ignored, GitHub CLI 2.81.0+ auth required, read-only behavior, the enablement JSON, the explicit test commands, and the disable/rebuild procedure.
 
 - [ ] **Step 4: Implement strict protocol validation**
 
@@ -177,7 +178,7 @@ Expected: FAIL because the adapter exports do not exist.
 
 - [ ] **Step 3: Implement process execution without a shell**
 
-Use `spawn(ghPath, ["api", "graphql", "--hostname", host, "--input", "-"], {stdio:["pipe","pipe","pipe"]})`. Write `{query,variables}` JSON to stdin, cap stdout at 8 MiB and stderr at 64 KiB, use a 30-second list/capabilities timeout and a 60-second detail timeout, and reject with sanitized categories: `gh-missing`, `auth-required`, `unauthorized`, `offline`, `rate-limited`, `invalid-response`, or `adapter-failed`.
+Use `spawn(ghPath, ["api", "graphql", "--hostname", host, "--input", "-"], {stdio:["pipe","pipe","pipe"]})`. Write `{query,variables}` JSON to stdin, cap stdout at 8 MiB and stderr at 64 KiB, use a 30-second list/capabilities timeout and a 60-second detail timeout, and reject with sanitized categories: `gh-missing`, `gh-upgrade-required`, `auth-required`, `unauthorized`, `offline`, `rate-limited`, `invalid-response`, or `adapter-failed`. Resolve `gh version --json version` before auth discovery, parse semantic versions numerically, and reject versions below 2.81.0 without invoking auth discovery or GraphQL.
 
 - [ ] **Step 4: Implement fixed capabilities and list documents**
 
@@ -189,7 +190,11 @@ query CodexLinuxIssuesCapabilities { viewer { login } rateLimit { cost remaining
 
 The list query uses `search(query:$search,type:ISSUE,first:30,after:$cursor)` and selects `id`, `number`, `title`, `url`, `state`, `stateReason`, timestamps, author, repository, labels(first:20), assignees(first:10), milestone, and `comments { totalCount }`, plus `pageInfo` and `rateLimit`.
 
-Resolve authenticated hosts with `gh auth status --json hosts`; select the requested authenticated host or the active entry. Never call `gh auth token` and never pass `--show-token`.
+Resolve authenticated hosts with `gh auth status --json hosts`; select the requested authenticated host or the active entry. Reject structured entries marked unauthenticated and reject fallback entries that are neither active nor authenticated. Never call `gh auth token` and never pass `--show-token`.
+
+Add focused tests proving GitHub CLI 2.80.0 and malformed version output return
+`gh-upgrade-required` before auth discovery, while 2.81.0 proceeds. Cover
+unauthenticated array/map host entries and explicit Enterprise-host selection.
 
 - [ ] **Step 5: Implement list normalization and partial-data behavior**
 
@@ -207,6 +212,10 @@ Return:
 ```
 
 Deduplicate Issues by `id`, preserve usable `data` when GraphQL also returns `errors`, and never include raw response bodies in an error.
+
+If usable Issue nodes exist but `pageInfo` is null because of a field-level
+GraphQL error, retain the nodes and return
+`{hasNextPage:false,endCursor:null}` with the error in `warnings`.
 
 - [ ] **Step 6: Run list-path tests, including literal metacharacter input**
 

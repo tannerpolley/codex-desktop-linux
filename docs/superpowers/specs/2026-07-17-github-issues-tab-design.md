@@ -128,6 +128,11 @@ contain credentials or full private response payloads.
 The feature uses GitHub CLI authentication only. It does not read or persist a
 token itself.
 
+The prototype requires GitHub CLI 2.81.0 or newer because structured
+`gh auth status --json hosts` output is part of the authenticated-host
+contract. Older versions fail before GraphQL work with a distinct
+`gh-upgrade-required` result.
+
 - If the existing Pull Requests account state exposes a selected hostname, the
   route passes that hostname to the bridge.
 - Otherwise, `capabilities` resolves the active authenticated `gh` host.
@@ -238,6 +243,7 @@ identifier.
 The UI distinguishes:
 
 - GitHub CLI missing;
+- GitHub CLI older than 2.81.0;
 - no authenticated account;
 - requested host not authenticated;
 - adapter or managed Node.js runtime unavailable;
@@ -305,6 +311,8 @@ The app-launch path must remain usable even if none of the descriptors apply.
 - Mock process execution and cover capabilities, active host selection,
   hostname validation, Assigned/Authored/All query construction, state and
   repository filters, text input, pagination, and rate-limit metadata.
+- Verify GitHub CLI versions below 2.81.0 return `gh-upgrade-required` before
+  host discovery or GraphQL execution.
 - Reject unknown operations, malformed input, excessive lengths, arbitrary
   GraphQL documents, and unauthenticated hostnames.
 - Verify free text containing whitespace or shell metacharacters is passed as
@@ -363,6 +371,8 @@ The app-launch path must remain usable even if none of the descriptors apply.
 
 - The route, preload, and main-process patches are intentionally pinned to the
   current DMG and may need revision after an upstream release.
+- The current machine's GitHub CLI 2.45.0 can exercise the upgrade-required
+  state but must be upgraded to 2.81.0 or newer for the authenticated inbox.
 - Full timelines require more GraphQL cost and pagination than list-only Issue
   rendering; the UI therefore loads detail on selection and does not prefetch
   every timeline.

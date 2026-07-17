@@ -59,6 +59,10 @@ test("detail and timeline documents use schema-valid timeline union selections",
   }
 });
 
+test("detail query stays within core scopes when project data is unavailable", () => {
+  assert.doesNotMatch(QUERIES.detail, /projectItems|projectsV2/);
+});
+
 for (const [type, expectedKind] of [
   ["IssueComment", "comment"],
   ["LabeledEvent", "label"],
@@ -343,7 +347,7 @@ test("getIssue returns normalized metadata, Markdown body, projects, and timelin
   });
   assert.equal(result.issue.id, "issue-1");
   assert.equal(result.issue.body, "# Parser errors\n\nDetails in Markdown.");
-  assert.deepEqual(result.issue.projects, [{ id: "project-1", number: 7, title: "Parser", url: "https://github.com/orgs/openai/projects/7" }]);
+  assert.deepEqual(result.issue.projects, []);
   assert.equal(result.timeline.items.length, 14);
   assert.deepEqual(result.timeline.pageInfo, { hasNextPage: true, endCursor: "timeline-cursor-1" });
   assert.deepEqual(result.rateLimit, { cost: 10, remaining: 4980, resetAt: "2026-07-17T18:00:00Z" });

@@ -54,7 +54,6 @@ const QUERIES = Object.freeze({
       assignees(first: 10) { nodes { login } }
       milestone { title number state dueOn }
       comments { totalCount }
-      projectItems(first: 20) { nodes { id project { id number title url } } }
       timelineItems(first: 50, after: $cursor) {
         nodes {
           __typename

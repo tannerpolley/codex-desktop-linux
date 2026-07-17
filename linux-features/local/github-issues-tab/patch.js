@@ -265,7 +265,7 @@ function patchIssuesRouteAssets(extractedDir) {
   let routeSource = routeEntry.source;
   const lazyExpression = [
     `const ${ISSUES_ROUTE_MARKER}=true;`,
-    `const codexLinuxGithubIssuesRoute=${routeShape.lazyWrapper}(async()=>{const [issuesModule,markdownModule]=await Promise.all([import(\`/github-issues-tab.mjs\`),import(\`./${dependencyResult.dependency.actionName}\`)]);const openExternal=url=>window.electronBridge?.openExternal?.(url);return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:markdownModule.${dependencyResult.dependency.markdownExport},openExternal})});`,
+    `const codexLinuxGithubIssuesRoute=${routeShape.lazyWrapper}(async()=>{const [issuesModule,markdownModule]=await Promise.all([import(\`/github-issues-tab.mjs\`),import(\`./${dependencyResult.dependency.actionName}\`)]);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:markdownModule.${dependencyResult.dependency.markdownExport},openExternal})});`,
   ].join("");
   routeSource = lazyExpression + routeSource;
   const patchedRouteMarkerIndex = routeSource.indexOf("path:`/pull-requests`", lazyExpression.length);

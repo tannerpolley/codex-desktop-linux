@@ -220,6 +220,8 @@ test("Issues route patch is transactional, idempotent, and wires captured depend
     assert.equal((route.match(/\/issues/g) ?? []).length, 1);
     assert.match(route, /nw\(async\(\)=>\{const \[issuesModule,markdownModule\]=await Promise\.all\(\[import\(`\/github-issues-tab\.mjs`\),import\(`\.\/pull-request-actions-current\.js`\)\]\)/);
     assert.match(route, /issuesModule\.createIssuesRoute\(\{React:FJ,components:\{\},Markdown:markdownModule\.l,openExternal\}\)/);
+    assert.match(route, /Markdown:markdownModule\.l,openExternal\}\)\}\);/);
+    assert.doesNotMatch(route, /Markdown:markdownModule\.l,openExternal\}\)\}\)\(\);/);
     assert.doesNotMatch(route, /React\.lazy|globalThis\.codexLinuxGithubIssuesDependencies/);
     assert.match(route, /sourceMappingURL=route\.js\.map/);
     assert.doesNotMatch(route, /children:\[const codexLinuxGithubIssuesRouteMarker/);

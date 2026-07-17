@@ -178,7 +178,7 @@ Expected: FAIL because the adapter exports do not exist.
 
 - [ ] **Step 3: Implement process execution without a shell**
 
-Use `spawn(ghPath, ["api", "graphql", "--hostname", host, "--input", "-"], {stdio:["pipe","pipe","pipe"]})`. Write `{query,variables}` JSON to stdin, cap stdout at 8 MiB and stderr at 64 KiB, use a 30-second list/capabilities timeout and a 60-second detail timeout, and reject with sanitized categories: `gh-missing`, `gh-upgrade-required`, `auth-required`, `unauthorized`, `offline`, `rate-limited`, `invalid-response`, or `adapter-failed`. Resolve `gh version --json version` before auth discovery, parse semantic versions numerically, and reject versions below 2.81.0 without invoking auth discovery or GraphQL.
+Use `spawn(ghPath, ["api", "graphql", "--hostname", host, "--input", "-"], {stdio:["pipe","pipe","pipe"]})`. Write `{query,variables}` JSON to stdin, cap stdout at 8 MiB and stderr at 64 KiB, use a 30-second list/capabilities timeout and a 60-second detail timeout, and reject with sanitized categories: `gh-missing`, `gh-upgrade-required`, `auth-required`, `unauthorized`, `offline`, `rate-limited`, `invalid-response`, or `adapter-failed`. Resolve `gh --version` before auth discovery, parse the first line only when it matches `gh version X.Y.Z`, compare semantic versions numerically, and reject versions below 2.81.0 without invoking auth discovery or GraphQL.
 
 - [ ] **Step 4: Implement fixed capabilities and list documents**
 
@@ -190,11 +190,13 @@ query CodexLinuxIssuesCapabilities { viewer { login } rateLimit { cost remaining
 
 The list query uses `search(query:$search,type:ISSUE,first:30,after:$cursor)` and selects `id`, `number`, `title`, `url`, `state`, `stateReason`, timestamps, author, repository, labels(first:20), assignees(first:10), milestone, and `comments { totalCount }`, plus `pageInfo` and `rateLimit`.
 
-Resolve authenticated hosts with `gh auth status --json hosts`; select the requested authenticated host or the active entry. Reject structured entries marked unauthenticated and reject fallback entries that are neither active nor authenticated. Never call `gh auth token` and never pass `--show-token`.
+Resolve authenticated hosts with `gh auth status --json hosts`; select the requested host only from an entry with `active:true` and `state:"success"`, or use the first entry meeting both conditions when no host is requested. Reject `state:"error"` and `state:"timeout"` even when an entry is active. Never call `gh auth token` and never pass `--show-token`.
 
-Add focused tests proving GitHub CLI 2.80.0 and malformed version output return
-`gh-upgrade-required` before auth discovery, while 2.81.0 proceeds. Cover
-unauthenticated array/map host entries and explicit Enterprise-host selection.
+Add focused tests proving supported `gh --version` output for 2.80.0 and
+malformed output return `gh-upgrade-required` before auth discovery, while
+2.81.0 proceeds. Cover actual `auth status --json hosts` entries with
+`active:true,state:"success"`, rejection of active `error`/`timeout` entries,
+and explicit Enterprise-host selection.
 
 - [ ] **Step 5: Implement list normalization and partial-data behavior**
 

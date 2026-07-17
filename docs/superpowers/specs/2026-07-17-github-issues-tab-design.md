@@ -130,8 +130,9 @@ token itself.
 
 The prototype requires GitHub CLI 2.81.0 or newer because structured
 `gh auth status --json hosts` output is part of the authenticated-host
-contract. Older versions fail before GraphQL work with a distinct
-`gh-upgrade-required` result.
+contract. The adapter parses the first semantic version from the supported
+text-only `gh --version` command. Older versions fail before GraphQL work with
+a distinct `gh-upgrade-required` result.
 
 - If the existing Pull Requests account state exposes a selected hostname, the
   route passes that hostname to the bridge.

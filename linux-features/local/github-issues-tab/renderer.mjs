@@ -23,7 +23,7 @@ export function initialIssuesState() {
     list: operationState({ items: [], pageInfo: pageState(), rateLimit: null, append: false }),
     listPage: pageState(),
     selectedId: null,
-    detail: operationState({ issue: null }),
+    detail: operationState({ issue: null, rateLimit: null }),
     timeline: operationState({ items: [], pageInfo: pageState(), rateLimit: null, append: false }),
     capabilities: operationState({ rateLimit: null }),
   };
@@ -79,15 +79,27 @@ function resetDataForHost(state, host) {
   };
 }
 
+function clearListForFilter(state) {
+  return {
+    ...state,
+    list: operationState({ items: [], pageInfo: pageState(), rateLimit: state.list.rateLimit, append: false }),
+    listPage: pageState(),
+    selectedId: null,
+    detail: operationState({ issue: null, rateLimit: null }),
+    timeline: operationState({ items: [], pageInfo: pageState(), rateLimit: null, append: false }),
+  };
+}
+
 export function issuesReducer(state, action) {
   if (!state || !action || typeof action.type !== "string") return state;
   switch (action.type) {
     case "host-set":
       if (state.host === (action.host ?? null)) return state;
       return resetDataForHost(state, action.host);
-    case "filters-set": {
+    case "filters-set":
+    case "filter-change": {
       const next = {
-        ...state,
+        ...clearListForFilter(state),
         view: ["assigned", "authored", "all"].includes(action.view) ? action.view : state.view,
         stateFilter: ["open", "closed", "all"].includes(action.stateFilter) ? action.stateFilter : state.stateFilter,
         repository: typeof action.repository === "string" ? action.repository : state.repository,
@@ -96,13 +108,17 @@ export function issuesReducer(state, action) {
       return next;
     }
     case "view-set":
-      return ["assigned", "authored", "all"].includes(action.view) ? { ...state, view: action.view } : state;
+    case "set-view":
+      return ["assigned", "authored", "all"].includes(action.view) ? { ...clearListForFilter(state), view: action.view } : state;
     case "state-set":
-      return ["open", "closed", "all"].includes(action.stateFilter) ? { ...state, stateFilter: action.stateFilter } : state;
+    case "set-state":
+      return ["open", "closed", "all"].includes(action.stateFilter) ? { ...clearListForFilter(state), stateFilter: action.stateFilter } : state;
     case "repository-set":
-      return typeof action.repository === "string" ? { ...state, repository: action.repository } : state;
+    case "set-repository":
+      return typeof action.repository === "string" ? { ...clearListForFilter(state), repository: action.repository } : state;
     case "text-set":
-      return typeof action.text === "string" ? { ...state, text: action.text } : state;
+    case "set-text":
+      return typeof action.text === "string" ? { ...clearListForFilter(state), text: action.text } : state;
     case "capabilities-start":
       return {
         ...state,
@@ -156,6 +172,7 @@ export function issuesReducer(state, action) {
       };
     case "list-success": {
       if (!isCurrent(state.list, action.requestId)) return state;
+      if (typeof action.data?.host === "string" && state.host !== null && action.data.host !== state.host) return state;
       const incoming = normalizeIssues(action.data?.issues);
       const append = action.append === true || action.data?.append === true || state.list.append === true;
       const items = append ? mergeIssues(state.list.items, incoming) : incoming;
@@ -166,6 +183,7 @@ export function issuesReducer(state, action) {
         viewerLogin: typeof action.data?.viewerLogin === "string" ? action.data.viewerLogin : state.viewerLogin,
         selectedId: selectedStillPresent ? state.selectedId : null,
         detail: selectedStillPresent ? state.detail : operationState({ issue: null }),
+        timeline: selectedStillPresent ? state.timeline : operationState({ items: [], pageInfo: pageState(), rateLimit: null, append: false }),
         list: {
           ...state.list,
           status: statusFor(action.data),
@@ -202,7 +220,7 @@ export function issuesReducer(state, action) {
       const timeline = data.timeline ?? {};
       return {
         ...state,
-        detail: { ...state.detail, status: statusFor(data), error: null, warnings: warningsValue(data.warnings), issue: data.issue ?? null },
+        detail: { ...state.detail, status: statusFor(data), error: null, warnings: warningsValue(data.warnings), issue: data.issue ?? null, rateLimit: data.rateLimit ?? null },
         timeline: {
           ...state.timeline,
           requestId: state.timeline.requestId,
@@ -315,6 +333,41 @@ function display(value, fallback = "—") {
   return value == null || value === "" ? fallback : String(value);
 }
 
+function safeHost(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 253
+    && value.split(".").every((label) => /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/u.test(label))
+    ? value
+    : null;
+}
+
+function safePathPart(value) {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/u.test(value) ? value : null;
+}
+
+function repositoryUrl(host, repository) {
+  const validHost = safeHost(host);
+  const parts = typeof repository === "string" ? repository.split("/") : [];
+  if (!validHost || parts.length !== 2 || !safePathPart(parts[0]) || !safePathPart(parts[1])) return null;
+  return `https://${validHost}/${parts[0]}/${parts[1]}`;
+}
+
+function userUrl(host, login) {
+  const validHost = safeHost(host);
+  if (!validHost || !safePathPart(login)) return null;
+  return `https://${validHost}/${login}`;
+}
+
+function commitUrl(host, repository, oid) {
+  const base = repositoryUrl(host, repository);
+  if (!base || typeof oid !== "string" || !/^[A-Fa-f0-9]{7,64}$/u.test(oid)) return null;
+  return `${base}/commit/${oid}`;
+}
+
+function rateLimitText(rateLimit) {
+  if (!rateLimit || (rateLimit.remaining == null && !rateLimit.resetAt)) return null;
+  return `Rate limit: ${display(rateLimit.remaining, "unknown")} remaining${rateLimit.resetAt ? ` · resets ${rateLimit.resetAt}` : ""}`;
+}
+
 function eventText(item) {
   const actor = item.actor?.login || "Someone";
   switch (item?.kind) {
@@ -322,88 +375,133 @@ function eventText(item) {
     case "label": return `${actor} ${item.action === "labeled" ? "added" : "removed"} label ${item.label?.name || "(unknown)"}`;
     case "assignment": return `${actor} ${item.action === "assigned" ? "assigned" : "unassigned"} ${item.assignee?.login || "a user"}`;
     case "milestone": return `${actor} ${item.action === "milestoned" ? "added" : "removed"} milestone ${item.milestone?.title || "(unknown)"}`;
-    case "state": return `${actor} marked the issue ${item.state || "updated"}`;
-    case "rename": return `${actor} changed the title`;
-    case "reference": return `${actor} referenced related work`;
-    case "transfer": return `${actor} transferred this issue`;
+    case "state": return `${actor} marked the issue ${item.state || "updated"}${item.reason ? ` (${item.reason})` : ""}`;
+    case "rename": return `${actor} changed the title${item.previousTitle || item.currentTitle ? `: ${display(item.previousTitle)} → ${display(item.currentTitle)}` : ""}`;
+    case "reference": return `${actor} referenced ${item.target?.oid ? `commit ${item.target.oid}` : "related work"}`;
+    case "transfer": return `${actor} transferred this issue${item.fromRepository || item.toRepository ? `: ${display(item.fromRepository)} → ${display(item.toRepository)}` : ""}`;
     default: return `${item?.type || "Timeline event"} · ${display(item?.createdAt)}`;
   }
 }
 
 function tokenStyles() {
   return {
-    color: "var(--text-primary)",
-    background: "var(--background-primary)",
-    borderColor: "var(--border-subtle)",
+    color: "var(--color-token-text-primary, currentColor)",
+    background: "var(--color-token-main-surface-primary, transparent)",
+    borderColor: "var(--color-token-border-light, currentColor)",
   };
 }
 
 function createStyles() {
-  return `.github-issues-route button,.github-issues-route input{font:inherit}.github-issues-route button:focus-visible,.github-issues-route input:focus-visible,.github-issues-route a:focus-visible{outline:2px solid var(--text-link);outline-offset:2px}.github-issues-route button{cursor:pointer}.github-issues-route button[aria-pressed="true"]{font-weight:600}.github-issues-route a{color:var(--text-link)}`;
+  return `.github-issues-route button,.github-issues-route input{font:inherit}.github-issues-route button:focus-visible,.github-issues-route input:focus-visible,.github-issues-route a:focus-visible,.github-issues-route [role="button"]:focus-visible{outline:2px solid var(--color-token-text-link-foreground, var(--color-token-link, currentColor));outline-offset:2px}.github-issues-route button{cursor:pointer}.github-issues-route button[aria-pressed="true"]{font-weight:600}.github-issues-route a{color:var(--color-token-text-link-foreground, var(--color-token-link, currentColor))}.github-issues-route-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.github-issues-route-main{display:grid;grid-template-columns:minmax(280px,36%) minmax(0,1fr);flex:1;min-height:0}.github-issues-route-inbox{min-width:0;overflow:auto;border-right:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-width:0;overflow:auto;padding:18px 22px}@media (max-width:760px){.github-issues-route-toolbar input{min-width:120px;flex:1}.github-issues-route-main{display:flex;flex-direction:column}.github-issues-route-inbox{max-height:42vh;border-right:0;border-bottom:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-height:360px;padding:16px}}`;
 }
 
 function node(React, type, props, ...children) {
   return React.createElement(type, props, ...children);
 }
 
+export function createSafeExternalLink(React, openExternal, url, label, children) {
+  const invoke = (event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    try { openExternal?.(url); } catch {}
+  };
+  const invokeAuxiliary = (event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    if (event?.button === 1) {
+      try { openExternal?.(url); } catch {}
+    }
+  };
+  return node(React, "button", {
+    type: "button",
+    onClick: invoke,
+    onAuxClick: invokeAuxiliary,
+    "aria-label": label,
+    style: {
+      color: "var(--color-token-text-link-foreground, var(--color-token-link, currentColor))",
+      background: "transparent",
+      border: 0,
+      padding: 0,
+      textDecoration: "underline",
+      cursor: "pointer",
+    },
+  }, children);
+}
+
 function Link({ React, url, openExternal, children: propChildren, label }, children) {
   const content = propChildren ?? children;
   if (!url) return node(React, "span", null, content);
-  const onClick = (event) => {
-    event.preventDefault();
-    try { openExternal?.(url); } catch {}
-  };
-  return node(React, "a", { href: url, onClick, "aria-label": label }, content);
+  return createSafeExternalLink(React, openExternal, url, label, content);
 }
 
-function Button({ React, label, onClick, pressed = false, disabled = false }) {
-  return node(React, "button", {
+function Button({ React, components, label, onClick, pressed = false, disabled = false }) {
+  const SharedButton = typeof components?.Button === "function" ? components.Button : null;
+  const buttonProps = {
     type: "button",
     onClick,
     disabled,
     "aria-label": label,
     "aria-pressed": pressed,
-    style: { ...tokenStyles(), border: "1px solid var(--border-subtle)", borderRadius: "6px", padding: "6px 10px" },
-  }, label);
+    style: { ...tokenStyles(), border: "1px solid var(--color-token-border-light, currentColor)", borderRadius: "6px", padding: "6px 10px" },
+  };
+  return node(React, SharedButton || "button", buttonProps, label);
 }
 
-function ListRow({ React, issue, selected, onSelect }) {
+function ListRow({ React, issue, selected, onSelect, host, openExternal }) {
   const labels = Array.isArray(issue.labels) ? issue.labels : [];
-  return node(React, "button", {
-    type: "button",
+  const repoLink = repositoryUrl(host, issue.repository);
+  return node(React, "div", {
+    role: "button",
+    tabIndex: 0,
     onClick: onSelect,
+    onKeyDown: (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(); }
+    },
     "aria-pressed": selected,
     "aria-label": `${display(issue.repository)} Issue ${display(issue.number)} ${display(issue.title)}`,
     style: {
       display: "block", width: "100%", textAlign: "left", padding: "12px 14px", border: 0,
-      borderBottom: "1px solid var(--border-subtle)", background: selected ? "var(--background-secondary)" : "transparent",
-      color: "var(--text-primary)", cursor: "pointer",
+      borderBottom: "1px solid var(--color-token-border-light, currentColor)", background: selected ? "var(--color-token-bg-secondary, transparent)" : "transparent",
+      color: "var(--color-token-text-primary, currentColor)", cursor: "pointer",
     },
   },
-  node(React, "div", { style: { fontSize: "12px", color: "var(--text-secondary)" } }, `${display(issue.repository)} · #${display(issue.number)}`),
+  node(React, "div", { style: { fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } },
+    repoLink ? Link({ React, url: repoLink, openExternal, label: "Open repository" }, display(issue.repository)) : display(issue.repository),
+    ` · #${display(issue.number)}`,
+  ),
   node(React, "div", { style: { marginTop: "4px", fontSize: "14px", fontWeight: 600 } }, display(issue.title)),
-  node(React, "div", { style: { display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "6px", fontSize: "12px", color: "var(--text-secondary)" } },
+  node(React, "div", { style: { display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "6px", fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } },
     `${display(issue.state).toLowerCase()} · ${display(issue.author, "unknown author")} · ${display(issue.commentCount, "0")} notes · ${formatRelative(issue.updatedAt)}`,
     labels.length > 0 ? ` · ${labels.map((label) => label.name).join(", ")}` : null,
     issue.assignees?.length > 0 ? ` · ${issue.assignees.join(", ")}` : null,
   ));
 }
 
-function TimelineEvent({ React, item, Markdown, openExternal }) {
+function TimelineEvent({ React, item, Markdown, openExternal, host }) {
   const text = eventText(item);
-  return node(React, "article", { style: { padding: "12px 0", borderBottom: "1px solid var(--border-subtle)" } },
+  const targetUrl = item?.target?.url || commitUrl(host, item?.target?.repository, item?.target?.oid);
+  const fromUrl = repositoryUrl(host, item?.fromRepository);
+  const toUrl = repositoryUrl(host, item?.toRepository);
+  return node(React, "article", { style: { padding: "12px 0", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
     node(React, "div", { style: { fontSize: "13px" } }, text),
-    node(React, "div", { style: { marginTop: "4px", fontSize: "12px", color: "var(--text-secondary)" } }, display(item?.createdAt)),
+    node(React, "div", { style: { marginTop: "4px", fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } }, display(item?.createdAt)),
+    item?.kind === "transfer" && (fromUrl || toUrl)
+      ? node(React, "div", { style: { marginTop: "4px" } },
+        fromUrl ? Link({ React, url: fromUrl, openExternal, label: "Open source repository" }, display(item.fromRepository)) : display(item.fromRepository),
+        " → ",
+        toUrl ? Link({ React, url: toUrl, openExternal, label: "Open destination repository" }, display(item.toRepository)) : display(item.toRepository),
+      )
+      : null,
     item?.kind === "comment" && item.body
       ? node(React, "div", { style: { marginTop: "8px" } }, Markdown ? node(React, Markdown, { content: item.body, source: item.body, markdown: item.body }) : node(React, "div", { style: { whiteSpace: "pre-wrap" } }, item.body))
-      : item?.kind === "reference" && item.target?.url
-        ? node(React, "div", { style: { marginTop: "4px" } }, Link({ React, url: item.target.url, openExternal, label: "Open related reference" }, display(item.target.title || item.target.repository)))
+      : item?.kind === "reference" && targetUrl
+        ? node(React, "div", { style: { marginTop: "4px" } }, Link({ React, url: targetUrl, openExternal, label: "Open related reference" }, display(item.target.title || item.target.repository || item.target.oid)))
         : null,
   );
 }
 
 function renderIssueBody(React, issue, Markdown) {
-  if (!issue?.body) return node(React, "p", { style: { color: "var(--text-secondary)" } }, "No issue body");
+  if (!issue?.body) return node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "No issue body");
   return Markdown
     ? node(React, Markdown, { content: issue.body, source: issue.body, markdown: issue.body })
     : node(React, "div", { style: { whiteSpace: "pre-wrap" } }, issue.body);
@@ -420,7 +518,7 @@ function ErrorMessage({ React, error }) {
     "rate-limited": "GitHub API rate limit reached",
     "invalid-response": "GitHub returned an incomplete response",
   };
-  return node(React, "div", { role: "alert", style: { padding: "12px 14px", color: "var(--text-error)" } }, messages[error.code] || "GitHub Issues request failed");
+  return node(React, "div", { role: "alert", style: { padding: "12px 14px", color: "var(--color-token-error-foreground, currentColor)" } }, messages[error.code] || "GitHub Issues request failed");
 }
 
 export function createIssuesRoute(deps = {}) {
@@ -429,12 +527,12 @@ export function createIssuesRoute(deps = {}) {
   const Markdown = deps.Markdown;
   const openExternal = deps.openExternal;
   const components = deps.components || {};
-  void components;
 
   function IssuesRoute() {
     const [state, dispatch] = React.useReducer(issuesReducer, undefined, initialIssuesState);
     const pending = React.useRef(Object.create(null));
     const mounted = React.useRef(true);
+    const renderButton = (props) => Button({ React, components, ...props });
 
     const cancel = React.useCallback((requestId) => {
       if (!requestId) return;
@@ -444,6 +542,18 @@ export function createIssuesRoute(deps = {}) {
       } catch {}
     }, []);
 
+    const cancelPending = React.useCallback((slot) => {
+      const requestId = pending.current[slot];
+      if (!requestId) return;
+      cancel(requestId);
+      if (pending.current[slot] === requestId) delete pending.current[slot];
+    }, [cancel]);
+
+    const changeFilter = React.useCallback((action) => {
+      cancelPending("list");
+      dispatch(action);
+    }, [cancelPending]);
+
     const send = React.useCallback((slot, operation, input, startAction, successType, errorType, extra = {}) => {
       const previous = pending.current[slot];
       if (previous) cancel(previous);
@@ -452,15 +562,18 @@ export function createIssuesRoute(deps = {}) {
       dispatch({ ...startAction, requestId, ...extra });
       const request = bridge()?.request;
       if (typeof request !== "function") {
+        if (pending.current[slot] === requestId) delete pending.current[slot];
         dispatch({ type: errorType, requestId, error: { code: "adapter-failed", message: "GitHub Issues bridge is unavailable" } });
         return requestId;
       }
       Promise.resolve().then(() => request({ version: 1, requestId, operation, input })).then((response) => {
         if (!mounted.current) return;
         if (response?.requestId !== requestId) return;
+        if (pending.current[slot] === requestId) delete pending.current[slot];
         if (response.ok) dispatch({ type: successType, requestId, data: response.data ?? {}, ...extra });
         else dispatch({ type: errorType, requestId, error: safeError(response.error), ...extra });
       }).catch((error) => {
+        if (pending.current[slot] === requestId) delete pending.current[slot];
         if (mounted.current) dispatch({ type: errorType, requestId, error: safeError(error), ...extra });
       });
       return requestId;
@@ -488,15 +601,20 @@ export function createIssuesRoute(deps = {}) {
       dispatch({ type: "detail-start", requestId });
       const request = bridge()?.request;
       if (typeof request !== "function") {
+        if (pending.current.detail === requestId) delete pending.current.detail;
         dispatch({ type: "detail-error", requestId, error: { code: "adapter-failed", message: "GitHub Issues bridge is unavailable" } });
         return requestId;
       }
       Promise.resolve().then(() => request({ version: 1, requestId, operation: "getIssue", input: { host: state.host, nodeId: issue.id } })).then((response) => {
         if (mounted.current && response?.requestId === requestId) {
+          if (pending.current.detail === requestId) delete pending.current.detail;
           if (response.ok) dispatch({ type: "detail-success", requestId, data: response.data ?? {} });
           else dispatch({ type: "detail-error", requestId, error: safeError(response.error) });
         }
-      }).catch((error) => mounted.current && dispatch({ type: "detail-error", requestId, error: safeError(error) }));
+      }).catch((error) => {
+        if (pending.current.detail === requestId) delete pending.current.detail;
+        if (mounted.current) dispatch({ type: "detail-error", requestId, error: safeError(error) });
+      });
       return requestId;
     }, [cancel, state.host]);
     const loadTimeline = React.useCallback(() => {
@@ -511,71 +629,97 @@ export function createIssuesRoute(deps = {}) {
       loadCapabilities(null);
       return () => {
         mounted.current = false;
-        for (const requestId of Object.values(pending.current)) cancel(requestId);
+        for (const slot of Object.keys(pending.current)) cancelPending(slot);
       };
-    }, [loadCapabilities, cancel]);
+    }, [loadCapabilities, cancelPending]);
+    const previousHost = React.useRef(state.host);
     React.useEffect(() => {
-      if (state.host && state.capabilities.status !== "loading") loadList(false);
-    }, [state.host, state.view, state.stateFilter, state.repository, state.text]);
+      if (previousHost.current === state.host) return;
+      for (const slot of ["list", "detail", "timeline"]) cancelPending(slot);
+      previousHost.current = state.host;
+    }, [state.host, cancelPending]);
+    React.useEffect(() => {
+      if (!state.host || state.capabilities.status === "loading") return undefined;
+      const timer = setTimeout(() => loadList(false), 250);
+      return () => clearTimeout(timer);
+    }, [loadList, state.host, state.view, state.stateFilter, state.repository, state.text, state.capabilities.status]);
 
     const style = { ...tokenStyles(), display: "flex", flexDirection: "column", minHeight: "420px", height: "100%", fontSize: "14px" };
     const tabs = ["assigned", "authored", "all"];
     const states = ["open", "closed", "all"];
     const issue = state.detail.issue;
+    const issueRepositoryUrl = repositoryUrl(state.host, issue?.repository);
+    const issueAuthorUrl = userUrl(state.host, issue?.author);
+    const listRateLimit = rateLimitText(state.list.rateLimit);
+    const detailRateLimit = rateLimitText(state.detail.rateLimit);
+    const capabilitiesRateLimit = rateLimitText(state.capabilities.rateLimit);
+    const timelineRateLimit = rateLimitText(state.timeline.rateLimit);
     return node(React, "div", { className: "github-issues-route", style },
       node(React, "style", null, createStyles()),
-      node(React, "header", { style: { display: "flex", alignItems: "center", gap: "12px", padding: "14px 18px", borderBottom: "1px solid var(--border-subtle)" } },
+      node(React, "header", { style: { display: "flex", alignItems: "center", gap: "12px", padding: "14px 18px", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
         node(React, "strong", null, "Issues"),
-        node(React, "span", { style: { color: "var(--text-secondary)", fontSize: "12px" } }, display(state.host, "No GitHub host")),
-        state.capabilities.status === "loading" ? node(React, "span", { role: "status", style: { color: "var(--text-secondary)", fontSize: "12px" } }, "Checking GitHub access…") : null,
+        node(React, "span", { style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, display(state.host, "No GitHub host")),
+        state.capabilities.status === "loading" ? node(React, "span", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, "Checking GitHub access…") : null,
         state.capabilities.status === "error" ? ErrorMessage({ React, error: state.capabilities.error }) : null,
+        capabilitiesRateLimit ? node(React, "span", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, capabilitiesRateLimit) : null,
       ),
-      node(React, "div", { style: { display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", padding: "12px 18px", borderBottom: "1px solid var(--border-subtle)" } },
-        ...tabs.map((view) => Button({ React, label: view[0].toUpperCase() + view.slice(1), pressed: state.view === view, onClick: () => dispatch({ type: "view-set", view }) })),
-        node(React, "span", { style: { width: "1px", height: "20px", background: "var(--border-subtle)", margin: "0 4px" } }),
-        ...states.map((filter) => Button({ React, label: filter[0].toUpperCase() + filter.slice(1), pressed: state.stateFilter === filter, onClick: () => dispatch({ type: "state-set", stateFilter: filter }) })),
+      node(React, "div", { className: "github-issues-route-toolbar", style: { padding: "12px 18px", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
+        ...tabs.map((view) => renderButton({ label: view[0].toUpperCase() + view.slice(1), pressed: state.view === view, onClick: () => changeFilter({ type: "view-set", view }) })),
+        node(React, "span", { style: { width: "1px", height: "20px", background: "var(--color-token-border-light, currentColor)", margin: "0 4px" } }),
+        ...states.map((filter) => renderButton({ label: filter[0].toUpperCase() + filter.slice(1), pressed: state.stateFilter === filter, onClick: () => changeFilter({ type: "state-set", stateFilter: filter }) })),
         node(React, "label", { style: { display: "flex", alignItems: "center", gap: "6px", marginLeft: "auto" } },
           node(React, "span", null, "Repository"),
-          node(React, "input", { value: state.repository, onChange: (event) => dispatch({ type: "repository-set", repository: event.target.value }), placeholder: "owner/name", "aria-label": "Repository filter", style: { ...tokenStyles(), border: "1px solid var(--border-subtle)", borderRadius: "6px", padding: "6px 8px", width: "150px" } }),
+          node(React, "input", { value: state.repository, onChange: (event) => changeFilter({ type: "repository-set", repository: event.target.value }), placeholder: "owner/name", "aria-label": "Repository filter", style: { ...tokenStyles(), border: "1px solid var(--color-token-border-light, currentColor)", borderRadius: "6px", padding: "6px 8px", width: "150px" } }),
         ),
         node(React, "label", { style: { display: "flex", alignItems: "center", gap: "6px" } },
           node(React, "span", null, "Text"),
-          node(React, "input", { value: state.text, onChange: (event) => dispatch({ type: "text-set", text: event.target.value }), placeholder: "Search", "aria-label": "Text filter", style: { ...tokenStyles(), border: "1px solid var(--border-subtle)", borderRadius: "6px", padding: "6px 8px", width: "170px" } }),
+          node(React, "input", { value: state.text, onChange: (event) => changeFilter({ type: "text-set", text: event.target.value }), placeholder: "Search", "aria-label": "Text filter", style: { ...tokenStyles(), border: "1px solid var(--color-token-border-light, currentColor)", borderRadius: "6px", padding: "6px 8px", width: "170px" } }),
         ),
-        Button({ React, label: "Refresh", onClick: () => loadList(false), disabled: state.list.status === "loading" || state.list.status === "refreshing" }),
+        renderButton({ label: "Refresh", onClick: () => loadList(false), disabled: state.list.status === "loading" || state.list.status === "refreshing" }),
       ),
-      node(React, "main", { style: { display: "grid", gridTemplateColumns: "minmax(280px, 36%) minmax(0, 1fr)", flex: 1, minHeight: 0 } },
-        node(React, "section", { "aria-label": "Issue inbox", style: { minWidth: 0, overflow: "auto", borderRight: "1px solid var(--border-subtle)" } },
-          state.list.status === "loading" ? node(React, "p", { style: { padding: "18px", color: "var(--text-secondary)" } }, "Loading Issues…") : null,
+      node(React, "main", { className: "github-issues-route-main" },
+        node(React, "section", { className: "github-issues-route-inbox", "aria-label": "Issue inbox" },
+          state.list.status === "loading" ? node(React, "p", { style: { padding: "18px", color: "var(--color-token-text-secondary, currentColor)" } }, "Loading Issues…") : null,
           state.list.status === "error" ? ErrorMessage({ React, error: state.list.error }) : null,
-          state.list.status === "partial" ? node(React, "p", { role: "status", style: { padding: "10px 14px", color: "var(--text-secondary)" } }, "Some Issue fields were unavailable") : null,
-          state.list.status !== "loading" && state.list.status !== "error" && state.list.items.length === 0 ? node(React, "p", { style: { padding: "18px", color: "var(--text-secondary)" } }, "No Issues match these filters") : null,
-          ...state.list.items.map((item) => ListRow({ React, issue: item, selected: item.id === state.selectedId, onSelect: () => loadDetail(item) })),
-          state.listPage.hasNextPage ? node(React, "div", { style: { padding: "12px 14px" } }, Button({ React, label: "Next page", onClick: () => loadList(true), disabled: state.list.status === "loading" || state.list.status === "refreshing" })) : null,
+          listRateLimit ? node(React, "p", { role: "status", style: { padding: "8px 14px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, listRateLimit) : null,
+          state.list.status === "partial" ? node(React, "p", { role: "status", style: { padding: "10px 14px", color: "var(--color-token-text-secondary, currentColor)" } }, "Some Issue fields were unavailable") : null,
+          state.list.status !== "loading" && state.list.status !== "error" && state.list.items.length === 0 ? node(React, "p", { style: { padding: "18px", color: "var(--color-token-text-secondary, currentColor)" } }, "No Issues match these filters") : null,
+          ...state.list.items.map((item) => ListRow({ React, issue: item, host: state.host, openExternal, selected: item.id === state.selectedId, onSelect: () => loadDetail(item) })),
+          state.listPage.hasNextPage ? node(React, "div", { style: { padding: "12px 14px" } }, renderButton({ label: "Next page", onClick: () => loadList(true), disabled: state.list.status === "loading" || state.list.status === "refreshing" })) : null,
         ),
-        node(React, "section", { "aria-label": "Issue detail", style: { minWidth: 0, overflow: "auto", padding: "18px 22px" } },
-          !state.selectedId ? node(React, "p", { style: { color: "var(--text-secondary)" } }, "Select an Issue to view its details") : null,
-          state.detail.status === "loading" ? node(React, "p", { style: { color: "var(--text-secondary)" } }, "Loading Issue details…") : null,
+        node(React, "section", { className: "github-issues-route-detail", "aria-label": "Issue detail" },
+          !state.selectedId ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Select an Issue to view its details") : null,
+          state.detail.status === "loading" ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Loading Issue details…") : null,
           state.detail.status === "error" ? ErrorMessage({ React, error: state.detail.error }) : null,
           issue ? node(React, "article", null,
-            node(React, "header", { style: { borderBottom: "1px solid var(--border-subtle)", paddingBottom: "14px", marginBottom: "16px" } },
+            node(React, "header", { style: { borderBottom: "1px solid var(--color-token-border-light, currentColor)", paddingBottom: "14px", marginBottom: "16px" } },
               node(React, "h2", { style: { margin: 0, fontSize: "20px", lineHeight: 1.3 } }, display(issue.title)),
-              node(React, "div", { style: { marginTop: "7px", color: "var(--text-secondary)" } }, `${display(issue.repository)} · #${display(issue.number)} · ${display(issue.state).toLowerCase()}`),
+              node(React, "div", { style: { marginTop: "7px", color: "var(--color-token-text-secondary, currentColor)" } },
+                issueRepositoryUrl ? Link({ React, url: issueRepositoryUrl, openExternal, label: "Open repository" }, display(issue.repository)) : display(issue.repository),
+                ` · #${display(issue.number)} · ${display(issue.state).toLowerCase()}`,
+              ),
               issue.url ? node(React, "div", { style: { marginTop: "7px" } }, Link({ React, url: issue.url, openExternal, label: "Open Issue in browser" }, "Open in browser")) : null,
-              node(React, "div", { style: { marginTop: "9px", color: "var(--text-secondary)", fontSize: "13px" } }, `by ${display(issue.author, "unknown author")} · created ${display(issue.createdAt)} · updated ${formatRelative(issue.updatedAt)}`),
-              issue.labels?.length ? node(React, "div", { style: { marginTop: "8px", color: "var(--text-secondary)", fontSize: "13px" } }, issue.labels.map((label) => label.name).join(", ")) : null,
-              issue.assignees?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--text-secondary)", fontSize: "13px" } }, issue.assignees.join(", ")) : null,
-              issue.milestone?.title ? node(React, "div", { style: { marginTop: "5px", color: "var(--text-secondary)", fontSize: "13px" } }, `Milestone: ${issue.milestone.title}`) : null,
-              issue.projects?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--text-secondary)", fontSize: "13px" } }, `Projects: ${issue.projects.map((project) => project.title || project.number).join(", ")}`) : null,
+              node(React, "div", { style: { marginTop: "9px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } },
+                "by ", issueAuthorUrl ? Link({ React, url: issueAuthorUrl, openExternal, label: "Open author profile" }, display(issue.author)) : display(issue.author, "unknown author"),
+                ` · created ${display(issue.createdAt)} · updated ${formatRelative(issue.updatedAt)}`,
+              ),
+              issue.stateReason ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Reason: ${issue.stateReason}`) : null,
+              issue.labels?.length ? node(React, "div", { style: { marginTop: "8px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, issue.labels.map((label) => label.name).join(", ")) : null,
+              issue.assignees?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, issue.assignees.join(", ")) : null,
+              issue.milestone?.title ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Milestone: ${issue.milestone.title}`) : null,
+              issue.projects?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Projects: ${issue.projects.map((project) => project.title || project.number).join(", ")}`) : null,
             ),
+            state.detail.status === "partial" ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Some Issue fields were unavailable") : null,
+            detailRateLimit ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, detailRateLimit) : null,
             node(React, "section", { "aria-label": "Issue body", style: { paddingBottom: "18px" } }, renderIssueBody(React, issue, Markdown)),
             node(React, "section", { "aria-label": "Issue timeline" },
               node(React, "h3", { style: { margin: "0 0 4px", fontSize: "15px" } }, "Timeline"),
-              state.timeline.status === "partial" ? node(React, "p", { role: "status", style: { color: "var(--text-secondary)", fontSize: "13px" } }, "Some timeline fields were unavailable") : null,
+              state.timeline.status === "partial" ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, "Some timeline fields were unavailable") : null,
               state.timeline.status === "error" ? ErrorMessage({ React, error: state.timeline.error }) : null,
-              state.timeline.items.length === 0 && state.timeline.status !== "loading" && state.timeline.status !== "error" ? node(React, "p", { style: { color: "var(--text-secondary)" } }, "No timeline activity") : null,
-              ...state.timeline.items.map((item, index) => node(React, TimelineEvent, { key: item.id || `${item.type}-${index}`, React, item, Markdown, openExternal })),
-              state.timeline.pageInfo?.hasNextPage ? node(React, "div", { style: { marginTop: "12px" } }, Button({ React, label: "Load more timeline", onClick: loadTimeline, disabled: state.timeline.status === "loading" || state.timeline.status === "refreshing" })) : null,
+              timelineRateLimit ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, timelineRateLimit) : null,
+              state.timeline.items.length === 0 && state.timeline.status !== "loading" && state.timeline.status !== "error" ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "No timeline activity") : null,
+              ...state.timeline.items.map((item, index) => node(React, TimelineEvent, { key: item.id || `${item.type}-${index}`, React, item, Markdown, openExternal, host: state.host })),
+              state.timeline.pageInfo?.hasNextPage ? node(React, "div", { style: { marginTop: "12px" } }, renderButton({ label: "Load more timeline", onClick: loadTimeline, disabled: state.timeline.status === "loading" || state.timeline.status === "refreshing" })) : null,
             ),
           ) : null,
         ),

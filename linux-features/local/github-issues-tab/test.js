@@ -570,3 +570,76 @@ test("renderer dynamically imports without a DOM", async () => {
   assert.equal(typeof module.createIssuesRoute, "function");
   assert.equal(typeof module.issuesReducer, "function");
 });
+
+test("renderer uses current app tokens and a responsive inbox/detail layout", () => {
+  const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
+  for (const token of [
+    "--color-token-text-primary",
+    "--color-token-text-secondary",
+    "--color-token-main-surface-primary",
+    "--color-token-bg-secondary",
+    "--color-token-border-light",
+    "--color-token-text-link-foreground",
+    "--color-token-error-foreground",
+    "@media",
+  ]) assert.match(source, new RegExp(token.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
+  for (const oldToken of ["--text-primary", "--text-secondary", "--background-primary", "--background-secondary", "--border-subtle", "--text-link", "--text-error"]) {
+    assert.doesNotMatch(source, new RegExp(oldToken.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
+  }
+  assert.match(source, /components\.Button/);
+  assert.doesNotMatch(source, /void components/);
+});
+
+test("filter changes invalidate list responses and host-mismatched pages are ignored", async () => {
+  const { initialIssuesState, issuesReducer } = await renderer();
+  for (const action of [
+    { type: "text-set", text: "parser" },
+    { type: "view-set", view: "authored" },
+    { type: "state-set", stateFilter: "closed" },
+    { type: "repository-set", repository: "octocat/hello" },
+  ]) {
+    let state = initialIssuesState();
+    state = issuesReducer(state, { type: "host-set", host: "github.com" });
+    state = issuesReducer(state, { type: "list-start", requestId: "list-current" });
+    state = issuesReducer(state, action);
+    assert.equal(state.list.requestId, null);
+    assert.equal(issuesReducer(state, { type: "list-success", requestId: "list-current", data: { host: "github.com", issues: [{ id: "stale" }] } }), state);
+  }
+  let state = initialIssuesState();
+  state = issuesReducer(state, { type: "host-set", host: "github.com" });
+  state = issuesReducer(state, { type: "list-start", requestId: "list-current" });
+  assert.equal(issuesReducer(state, { type: "list-success", requestId: "list-current", data: { host: "ghe.example.com", issues: [{ id: "wrong-host" }] } }), state);
+});
+
+test("safe external links route primary and middle activation through openExternal", async () => {
+  const { createSafeExternalLink } = await renderer();
+  const calls = [];
+  const React = { createElement: (type, props, ...children) => ({ type, props, children }) };
+  const element = createSafeExternalLink(React, (url) => calls.push(url), "https://github.com/octocat/hello", "Open repository", "Repository");
+  assert.equal(element.type, "button");
+  const primary = { button: 0, preventDefault() { this.prevented = true; } };
+  element.props.onClick(primary);
+  assert.equal(primary.prevented, true);
+  const middle = { button: 1, preventDefault() { this.prevented = true; } };
+  element.props.onAuxClick(middle);
+  assert.equal(middle.prevented, true);
+  assert.deepEqual(calls, ["https://github.com/octocat/hello", "https://github.com/octocat/hello"]);
+  assert.equal("href" in element.props, false);
+  assert.match(fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8"), /onAuxClick/);
+});
+
+test("renderer source includes debounce and identity-safe pending cleanup", () => {
+  const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
+  assert.match(source, /setTimeout\([^\n]*250/);
+  assert.match(source, /clearTimeout/);
+  assert.match(source, /pending\.current\[slot\]\s*===\s*requestId/);
+  assert.match(source, /pending\.current\.detail\s*===\s*requestId/);
+});
+
+test("renderer includes detail partial/rate-limit context and safe host-derived links", () => {
+  const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
+  for (const marker of ["stateReason", "previousTitle", "currentTitle", "fromRepository", "toRepository", "rateLimitText", "repositoryUrl", "userUrl", "commitUrl", "state.detail.status === \\\"partial\\\""]) {
+    assert.match(source, new RegExp(marker.replace(/[.*+?^${}()|[\\]\\]/g, "\\\\$&")));
+  }
+  assert.doesNotMatch(source, /href\s*:/);
+});

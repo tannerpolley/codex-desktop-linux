@@ -94,6 +94,7 @@ globalThis.${BRIDGE_MARKER}=${VERSION};
 const codexLinuxGithubIssuesChannel=\`${CHANNEL}\`;
 const codexLinuxGithubIssuesMaxStdoutBytes=8*1024*1024;
 const codexLinuxGithubIssuesPending=new Map();
+const codexLinuxGithubIssuesTerminated=new WeakSet();
 const codexLinuxGithubIssuesOperations=new Set([\`capabilities\`,\`listIssues\`,\`getIssue\`,\`getIssueTimelinePage\`,\`cancel\`]);
 const codexLinuxGithubIssuesAdapterTimeouts=Object.freeze({capabilities:30000,listIssues:30000,getIssue:60000,getIssueTimelinePage:60000});
 const codexLinuxGithubIssuesPath=require(\`node:path\`);
@@ -135,7 +136,7 @@ function codexLinuxGithubIssuesClone(value,depth=0){
   if(depth>32)throw Error(\`response too deep\`);
   if(value===null||typeof value===\`string\`||typeof value===\`number\`||typeof value===\`boolean\`)return value;
   if(Array.isArray(value))return value.map((item)=>codexLinuxGithubIssuesClone(item,depth+1));
-  if(codexLinuxGithubIssuesRecord(value)){const result={};for(const key of Object.keys(value))result[key]=codexLinuxGithubIssuesClone(value[key],depth+1);return result}
+  if(codexLinuxGithubIssuesRecord(value)){const entries=[];for(const key of Reflect.ownKeys(value)){if(typeof key!==\`string\`)throw Error(\`response contains unsupported field\`);entries.push([key,codexLinuxGithubIssuesClone(value[key],depth+1)])}return Object.fromEntries(entries)}
   throw Error(\`response contains unsupported data\`);
 }
 function codexLinuxGithubIssuesParsedResponse(request,stdout){
@@ -145,17 +146,19 @@ function codexLinuxGithubIssuesParsedResponse(request,stdout){
   return codexLinuxGithubIssuesResponse(request.requestId,false,null,parsed.error);
 }
 function codexLinuxGithubIssuesTerminate(child){
+  if(child==null||codexLinuxGithubIssuesTerminated.has(child))return;
+  codexLinuxGithubIssuesTerminated.add(child);
   const pid=Number(child?.pid);
   if(Number.isSafeInteger(pid)&&pid>1){try{process.kill(-pid,\`SIGTERM\`);return}catch{}}
   try{child?.kill()}catch{}
 }
 function codexLinuxGithubIssuesTerminateAll(){for(const child of codexLinuxGithubIssuesPending.values())codexLinuxGithubIssuesTerminate(child);codexLinuxGithubIssuesPending.clear()}
 process.on(\`exit\`,codexLinuxGithubIssuesTerminateAll);
-function codexLinuxGithubIssuesRun(request){
+async function codexLinuxGithubIssuesRun(request){
   let child=null;
   try{child=codexLinuxGithubIssuesSpawn(codexLinuxGithubIssuesNodePath,[codexLinuxGithubIssuesAdapterPath],{stdio:[\`pipe\`,\`pipe\`,\`pipe\`],detached:true})}catch{return Promise.resolve(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)))}
   codexLinuxGithubIssuesPending.set(request.requestId,child);
-  return new Promise((resolve)=>{
+  try{return await new Promise((resolve)=>{
     let settled=false,stdout=\`\`,stdoutBytes=0;
     const timeoutMs=codexLinuxGithubIssuesAdapterTimeouts[request.operation]||30000;
     let timer;
@@ -167,13 +170,13 @@ function codexLinuxGithubIssuesRun(request){
     child.on(\`error\`,()=>{if(settled)return;finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)))});
     child.on(\`close\`,(code)=>{if(settled)return;if(code!==0&&stdout.trim().length===0){finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)));return}finish(codexLinuxGithubIssuesParsedResponse(request,stdout))});
     try{child.stdin.end(JSON.stringify(request))}catch{kill();finish(codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`adapter-failed\`,\`GitHub Issues adapter failed\`)))}
-  });
+  })}finally{if(codexLinuxGithubIssuesPending.get(request.requestId)===child)codexLinuxGithubIssuesPending.delete(request.requestId)}
 }
 async function codexLinuxGithubIssuesHandle(raw){
   let request;try{request=codexLinuxGithubIssuesValidate(raw)}catch(error){return codexLinuxGithubIssuesResponse(raw?.requestId,false,null,codexLinuxGithubIssuesError(\`invalid-request\`,\`Invalid GitHub Issues request\`))}
-  if(request.operation===\`cancel\`){const target=request.input.targetRequestId;const child=codexLinuxGithubIssuesPending.get(target);if(child==null)return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`not-found\`,\`Request is not running\`));codexLinuxGithubIssuesPending.delete(target);codexLinuxGithubIssuesTerminate(child);return codexLinuxGithubIssuesResponse(request.requestId,true,{cancelled:target},null)}
+  if(request.operation===\`cancel\`){const target=request.input.targetRequestId;const child=codexLinuxGithubIssuesPending.get(target);if(child==null)return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`not-found\`,\`Request is not running\`));codexLinuxGithubIssuesTerminate(child);return codexLinuxGithubIssuesResponse(request.requestId,true,{cancelled:target},null)}
   if(codexLinuxGithubIssuesPending.has(request.requestId))return codexLinuxGithubIssuesResponse(request.requestId,false,null,codexLinuxGithubIssuesError(\`duplicate-request\`,\`Request id is already running\`));
-  try{return await codexLinuxGithubIssuesRun(request)}finally{codexLinuxGithubIssuesPending.delete(request.requestId)}
+  return codexLinuxGithubIssuesRun(request)
 }
 ${ipcMainSymbol}.handle(codexLinuxGithubIssuesChannel,async(_event,request)=>codexLinuxGithubIssuesHandle(request));
 })();`;

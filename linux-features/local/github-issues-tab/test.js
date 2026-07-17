@@ -221,7 +221,7 @@ function fakeChild() {
     stdout: { on(event, callback) { listeners.set(`stdout:${event}`, callback); return child.stdout; } },
     stderr: { on(event, callback) { listeners.set(`stderr:${event}`, callback); return child.stderr; } },
     on(event, callback) { listeners.set(event, callback); return child; },
-    kill() { child.killed = true; listeners.get("close")?.(null, "SIGTERM"); },
+    kill() { child.killed = true; if (!child.noClose) listeners.get("close")?.(null, "SIGTERM"); },
     emit(event, ...args) { listeners.get(event)?.(...args); },
     emitStdout(value) { listeners.get("stdout:data")?.(value); },
   };
@@ -373,6 +373,52 @@ test("main bridge ignores stdout and process events after settlement", async () 
   child.emit("close", 1, null);
   assert.equal(response.ok, true);
   assert.equal(child.killed, false);
+});
+
+test("main bridge keeps cancelled ownership until the original child settles", async () => {
+  const children = [];
+  const handler = createBridgeVm(() => {
+    const child = fakeChild();
+    child.pid = 8000 + children.length;
+    child.noClose = true;
+    children.push(child);
+    return child;
+  });
+  const first = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "reuse" }));
+  await Promise.resolve();
+  const cancelled = await handler({}, handler.toVm({ version: 1, requestId: "cancel-reuse", operation: "cancel", input: { targetRequestId: "reuse" } }));
+  assert.equal(cancelled.ok, true);
+  const duplicate = await handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "reuse" }));
+  assert.equal(duplicate.error.code, "duplicate-request");
+  const second = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "keep" }));
+  await Promise.resolve();
+  const cancelSecond = await handler({}, handler.toVm({ version: 1, requestId: "cancel-keep", operation: "cancel", input: { targetRequestId: "keep" } }));
+  assert.equal(cancelSecond.ok, true);
+  children[0].emit("close", null, "SIGTERM");
+  await first;
+  const reused = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "reuse" }));
+  await Promise.resolve();
+  assert.equal(children.length, 3);
+  children[2].emitStdout(JSON.stringify({ version: 1, requestId: "reuse", ok: true, data: {}, error: null }));
+  children[2].emit("close", 0, null);
+  await reused;
+  handler.emitExit();
+  assert.deepEqual(handler.processKills, [[-8000, "SIGTERM"], [-8001, "SIGTERM"]]);
+  children[1].emit("close", null, "SIGTERM");
+});
+
+test("main bridge clones adapter __proto__ data without prototype pollution", async () => {
+  const child = fakeChild();
+  const handler = createBridgeVm(() => child);
+  const pending = handler({}, handler.toVm({ ...capabilitiesRequest, requestId: "proto-data" }));
+  await Promise.resolve();
+  child.emitStdout('{"version":1,"requestId":"proto-data","ok":true,"data":{"__proto__":{"polluted":true}},"error":null}');
+  child.emit("close", 0, null);
+  const response = await pending;
+  assert.equal(response.ok, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(response.data, "__proto__"), true);
+  assert.equal(response.data.polluted, undefined);
+  assert.equal(Object.prototype.polluted, undefined);
 });
 
 test("preload patch requires an actual getSentryInitOptions property", () => {

@@ -388,7 +388,7 @@ function normalizeTimelineItem(node, host) { // host is part of the adapter cont
         ...base,
         kind: "transfer",
         fromRepository: normalizeRepository(node.fromRepository),
-        issue: normalizeReference(node.issue),
+        toRepository: normalizeRepository(node.issue?.repository || node.toRepository),
       };
     default:
       return base;

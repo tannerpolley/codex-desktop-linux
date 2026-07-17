@@ -107,7 +107,7 @@ test("timeline normalizers map schema-valid milestone and transfer fields", () =
     dueOn: null,
   });
   assert.equal(normalizeTimelineItem(byType.TransferredEvent, "github.com").fromRepository, "old/codex");
-  assert.equal(normalizeTimelineItem(byType.TransferredEvent, "github.com").issue.repository, "openai/codex");
+  assert.equal(normalizeTimelineItem(byType.TransferredEvent, "github.com").toRepository, "openai/codex");
 });
 
 function fakeSpawn(responses, calls) {

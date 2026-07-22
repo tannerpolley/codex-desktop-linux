@@ -1,8 +1,10 @@
 # GitHub Issues Tab (local prototype)
 
 This is a current-DMG-only prototype for a local, read-only GitHub Issues
-inbox and timeline beside Pull Requests. The feature is local/ignored by
-default and is not enabled in the committed feature configuration.
+inbox and timeline opened from an Issues button in the Pinned Summary
+Environment section. The button opens the compact Issues view in the app's
+side panel. The feature is local/ignored by default and is not enabled in the
+committed feature configuration.
 
 The feature requires GitHub CLI 2.81.0+ (`gh`) authentication for the selected
 GitHub.com or Enterprise host. Older or malformed CLI versions return an

@@ -28,7 +28,10 @@ const {
   patchPreloadBridgeAssets,
   optionalDriftStatus,
   patchIssuesRouteAssets,
-  patchIssuesNavigationAssets,
+  patchIssuesSummaryAssets,
+  patchIssuesSidePanelAssets,
+  ISSUES_ENVIRONMENT_MARKER,
+  ISSUES_SIDE_PANEL_MARKER,
 } = require("./patch.js");
 
 const preloadDescriptor = descriptors.find((descriptor) => descriptor.id === "github-issues-preload-bridge");
@@ -225,16 +228,34 @@ function writeIssueAssetFixture() {
     "const a=q(J),o=ln(),s=cl();const nav=b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{fE(a,o)},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null;",
     "//# sourceMappingURL=route.js.map",
   ].join(""), "utf8");
+  fs.writeFileSync(path.join(assetsDir, "local-conversation-thread-current.js"), [
+    "function Lv(e){let{onOpenPullRequestSidePanel:s}=e;return(0,J.jsx)(J.Section,{sectionKey:`environment`,children:[]})}",
+    "function Uv(e){let{onOpenPullRequestSidePanel:n}=e;return(0,K.jsx)(Lv,{onOpenPullRequestSidePanel:n})}",
+    "function Wv(e){return(0,K.jsx)(Lv,{})}",
+    "function Hv(e){return e.lastTurnOnly?(0,K.jsx)(Wv,{...e}):(0,K.jsx)(Uv,{...e})}",
+    "function Bb({onOpenPullRequestSidePanel:e}){return(0,H.jsx)(Hv,{onOpenPullRequestSidePanel:e})}",
+    "function zb(e){let{onOpenPullRequestSidePanel:o}=e;return(0,H.jsx)(Bb,{onOpenPullRequestSidePanel:o})}",
+    "function Lb(e){let{onOpenPullRequestSidePanel:r}=e;return(0,H.jsx)(zb,{onOpenPullRequestSidePanel:r})}",
+    "function Fb(e){let{onOpenPullRequestSidePanel:a}=e;return(0,H.jsx)(zb,{onOpenPullRequestSidePanel:a})}",
+  ].join(""), "utf8");
+  fs.writeFileSync(path.join(assetsDir, "local-conversation-page-current.js"), [
+    "import{createElement as ce}from`react`;var ll,Li,Bi,Hi,qi;function ol(){}",
+    "function du(e){let n=scope,s=hostId,x=onOpenSubagentsPanel,{onOpenPullRequestSidePanel:S}=e;return(0,Q.jsx)(bo,{onOpenPullRequestSidePanel:S,onOpenSubagentsPanel:x})}",
+    "function fu(e){let{onOpenPullRequestSidePanel:r}=e;return(0,Q.jsx)(yo,{onOpenPullRequestSidePanel:r})}",
+    "function cl(e,{hostId:t,item:n,repo:r},i=!0,a=`right`){let o=`pull-request:${n.url}`,s=Li(e,o)??a;return Bi(s).openTab(e,ol,{activate:i,id:o,props:{hostId:t,item:n,repo:r}}),i&&Hi(e,s),!0}",
+  ].join(""), "utf8");
   return { root, assetsDir };
 }
 
-test("Issues route patch is transactional, idempotent, and wires captured dependencies", () => {
+test("Issues route and side-panel patches are transactional and idempotent", () => {
   const fixture = writeIssueAssetFixture();
   try {
-    assert.equal(descriptors.length, 4);
-    assert.equal(descriptors.filter((descriptor) => descriptor.phase === "extracted-app:post-webview").length, 3);
+    assert.equal(descriptors.length, 5);
+    assert.equal(descriptors.filter((descriptor) => descriptor.phase === "extracted-app:post-webview").length, 4);
     assert.equal(descriptors.some((descriptor) => descriptor.id === "github-issues-renderer-route"), true);
-    assert.equal(descriptors.some((descriptor) => descriptor.id === "github-issues-navigation"), true);
+    assert.equal(descriptors.some((descriptor) => descriptor.id === "github-issues-navigation"), false);
+    assert.equal(typeof patchIssuesSummaryAssets, "function");
+    assert.equal(typeof patchIssuesSidePanelAssets, "function");
     const before = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
     const first = patchIssuesRouteAssets(fixture.root);
     assert.equal(first.matched, true);
@@ -252,25 +273,27 @@ test("Issues route patch is transactional, idempotent, and wires captured depend
     assert.match(route, /sourceMappingURL=route\.js\.map/);
     assert.doesNotMatch(route, /children:\[const codexLinuxGithubIssuesRouteMarker/);
     assert.equal(fs.readFileSync(path.join(fixture.assetsDir, "pull-request-actions-current.js"), "utf8"), before["pull-request-actions-current.js"]);
-    const navigation = patchIssuesNavigationAssets(fixture.root);
-    assert.equal(navigation.matched, true);
-    assert.equal(navigation.changed, 1);
-    const nav = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
-    const originalPullRequestsNav = "b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{fE(a,o)},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null";
-    assert.equal(nav.split(originalPullRequestsNav).length - 1, 1);
-    assert.equal((nav.match(/sidebarElectron\.pullRequestsRouteNavLink/g) ?? []).length, 1);
-    assert.equal((nav.match(/isActive:s\.pathname\.startsWith\(`\/pull-requests`\)/g) ?? []).length, 1);
-    assert.equal((nav.match(/sidebarElectron\.issuesRouteNavLink/g) ?? []).length, 1);
-    assert.equal((nav.match(/isActive:s\.pathname\.startsWith\(`\/issues`\)/g) ?? []).length, 1);
-    assert.equal((nav.match(/onClick:\(\)=>\{o\(`\/issues`\)\}/g) ?? []).length, 1);
-    assert.equal((nav.match(/onClick:\(\)=>\{fE\(a,o\)\}/g) ?? []).length, 1);
-    assert.match(nav, /defaultMessage:`Issues`/);
-    assert.match(nav, /circle-dot-current\.js/);
+    const summary = patchIssuesSummaryAssets(fixture.root);
+    assert.equal(summary.matched, true);
+    assert.equal(summary.changed, 1);
+    const sidePanel = patchIssuesSidePanelAssets(fixture.root);
+    assert.equal(sidePanel.matched, true);
+    assert.equal(sidePanel.changed, 1);
+    const summarySource = fs.readFileSync(path.join(fixture.assetsDir, "local-conversation-thread-current.js"), "utf8");
+    const sidePanelSource = fs.readFileSync(path.join(fixture.assetsDir, "local-conversation-page-current.js"), "utf8");
+    assert.match(summarySource, new RegExp(ISSUES_ENVIRONMENT_MARKER));
+    assert.match(summarySource, /onOpenIssuesSidePanel/);
+    assert.match(summarySource, /Issues/);
+    assert.match(sidePanelSource, new RegExp(ISSUES_SIDE_PANEL_MARKER));
+    assert.match(sidePanelSource, /id:`issues`|id:\"issues\"/);
+    assert.match(sidePanelSource, /createIssuesSidePanel/);
     const after = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
     const second = patchIssuesRouteAssets(fixture.root);
-    const secondNavigation = patchIssuesNavigationAssets(fixture.root);
+    const secondSummary = patchIssuesSummaryAssets(fixture.root);
+    const secondSidePanel = patchIssuesSidePanelAssets(fixture.root);
     assert.deepEqual(second, { matched: true, changed: 0 });
-    assert.deepEqual(secondNavigation, { matched: true, changed: 0 });
+    assert.deepEqual(secondSummary, { matched: true, changed: 0 });
+    assert.deepEqual(secondSidePanel, { matched: true, changed: 0 });
     assert.deepEqual(Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")])), after);
     assert.notDeepEqual(before, after);
   } finally {
@@ -278,15 +301,36 @@ test("Issues route patch is transactional, idempotent, and wires captured depend
   }
 });
 
-test("Issues route and navigation patches leave all files unchanged on deliberate drift", () => {
-  for (const drift of ["route", "nav", "dependency"]) {
+test("Issues route and side-panel patches leave all files unchanged on deliberate drift", () => {
+  for (const drift of ["route", "summary", "side-panel", "dependency"]) {
     const fixture = writeIssueAssetFixture();
     try {
-      const driftPath = path.join(fixture.assetsDir, drift === "route" ? "route.js" : drift === "dependency" ? "pull-request-actions-current.js" : "route.js");
+      const driftPath = path.join(
+        fixture.assetsDir,
+        drift === "route" || drift === "dependency"
+          ? (drift === "dependency" ? "pull-request-actions-current.js" : "route.js")
+          : drift === "summary" ? "local-conversation-thread-current.js" : "local-conversation-page-current.js",
+      );
       const source = fs.readFileSync(driftPath, "utf8");
-      fs.writeFileSync(driftPath, drift === "route" ? source.replace("PullRequestsRoute", "PullRequestRoute") : drift === "dependency" ? source.replaceAll("children", "body") : source.replace("sidebarElectron.pullRequestsRouteNavLink", "sidebarElectron.pullRequestsNavLink"), "utf8");
+      fs.writeFileSync(
+        driftPath,
+        drift === "route"
+          ? source.replace("PullRequestsRoute", "PullRequestRoute")
+          : drift === "dependency"
+            ? source.replaceAll("children", "body")
+            : drift === "summary"
+              ? source.replace("sectionKey:`environment`", "sectionKey:`other`")
+              : source.replace("function cl", "function other"),
+        "utf8",
+      );
       const before = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
-      const result = drift === "nav" ? patchIssuesNavigationAssets(fixture.root) : patchIssuesRouteAssets(fixture.root);
+      const result = drift === "route"
+        ? patchIssuesRouteAssets(fixture.root)
+        : drift === "summary"
+          ? patchIssuesSummaryAssets(fixture.root)
+          : drift === "side-panel"
+            ? patchIssuesSidePanelAssets(fixture.root)
+            : patchIssuesRouteAssets(fixture.root);
       assert.equal(result.matched, false);
       assert.equal(result.changed, 0);
       assert.deepEqual(Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")])), before);
@@ -304,19 +348,6 @@ test("Issues route and navigation patches leave all files unchanged on deliberat
     assert.deepEqual(Object.fromEntries(fs.readdirSync(ambiguous.assetsDir).map((name) => [name, fs.readFileSync(path.join(ambiguous.assetsDir, name), "utf8")])), before);
   } finally {
     fs.rmSync(ambiguous.root, { recursive: true, force: true });
-  }
-});
-
-test("Issues navigation refuses to attach without an applied route marker", () => {
-  const fixture = writeIssueAssetFixture();
-  try {
-    const before = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
-    const result = patchIssuesNavigationAssets(fixture.root);
-    assert.equal(result.matched, false);
-    assert.equal(result.changed, 0);
-    assert.equal(fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8"), before);
-  } finally {
-    fs.rmSync(fixture.root, { recursive: true, force: true });
   }
 });
 
@@ -727,6 +758,14 @@ test("renderer dynamically imports without a DOM", async () => {
   const module = await renderer();
   assert.equal(typeof module.createIssuesRoute, "function");
   assert.equal(typeof module.issuesReducer, "function");
+});
+
+test("renderer exposes a compact Issues side-panel component", async () => {
+  const module = await renderer();
+  assert.equal(typeof module.createIssuesSidePanel, "function");
+  const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
+  assert.match(source, /createIssuesSidePanel/);
+  assert.match(source, /compact/);
 });
 
 test("renderer uses current app tokens and a responsive inbox/detail layout", () => {

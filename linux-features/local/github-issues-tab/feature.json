@@ -1,7 +1,7 @@
 {
   "id": "github-issues-tab",
   "title": "GitHub Issues Tab",
-  "description": "Local read-only GitHub Issues inbox and timeline beside Pull Requests.",
+  "description": "Local read-only GitHub Issues inbox and timeline from the Pinned Summary Environment section.",
   "defaultEnabled": false,
   "entrypoints": { "patchDescriptors": "./patch.js" },
   "resources": [

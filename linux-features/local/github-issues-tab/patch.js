@@ -67,6 +67,8 @@ function optionalDriftStatus(result, warnings) {
 
 const ISSUES_ROUTE_MARKER = "codexLinuxGithubIssuesRouteMarker";
 const ISSUES_NAV_MARKER = "sidebarElectron.issuesRouteNavLink";
+const ISSUES_ENVIRONMENT_MARKER = "codexLinuxGithubIssuesEnvironmentAction";
+const ISSUES_SIDE_PANEL_MARKER = "codexLinuxGithubOpenIssuesSidePanel";
 
 function readWebviewAssets(extractedDir) {
   const assetsDir = path.join(extractedDir, "webview", "assets");
@@ -297,6 +299,168 @@ function patchIssuesRouteAssets(extractedDir) {
   return { matched: true, changed: 1 };
 }
 
+function findFunctionRange(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start === -1) return null;
+  const parameterOpen = source.indexOf("(", start);
+  if (parameterOpen === -1) return null;
+  let parameterDepth = 0;
+  let quote = null;
+  let escaped = false;
+  let parameterClose = -1;
+  for (let index = parameterOpen; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote !== null) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "`" || character === "\"" || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "(") parameterDepth += 1;
+    else if (character === ")" && --parameterDepth === 0) {
+      parameterClose = index;
+      break;
+    }
+  }
+  if (parameterClose === -1) return null;
+  const open = source.indexOf("{", parameterClose);
+  if (open === -1) return null;
+  let depth = 0;
+  quote = null;
+  escaped = false;
+  for (let index = open; index < source.length; index += 1) {
+    const character = source[index];
+    if (quote !== null) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "`" || character === "\"" || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === "{") depth += 1;
+    else if (character === "}" && --depth === 0) return { start, open, end: index + 1 };
+  }
+  return null;
+}
+
+function patchFunctionBody(source, name, callback) {
+  const range = findFunctionRange(source, name);
+  if (range == null) return { source, matched: false };
+  const body = source.slice(range.start, range.end);
+  const patchedBody = callback(body);
+  return { source: `${source.slice(0, range.start)}${patchedBody}${source.slice(range.end)}`, matched: true };
+}
+
+function addIssuesCallbackBinding(body) {
+  if (body.includes("onOpenIssuesSidePanel:codexLinuxIssuesOpen")) return body;
+  const headerEnd = body.indexOf("}=e");
+  if (headerEnd === -1) return null;
+  return `${body.slice(0, headerEnd)},onOpenIssuesSidePanel:codexLinuxIssuesOpen${body.slice(headerEnd)}`;
+}
+
+function addIssuesCallbackToCall(body, componentName) {
+  const pattern = new RegExp(`(\\.jsx\\)\\(${componentName},\\{)`);
+  return body.replace(pattern, "$1onOpenIssuesSidePanel:codexLinuxIssuesOpen,");
+}
+
+function patchIssuesSummaryAsset(source) {
+  if (source.includes(ISSUES_ENVIRONMENT_MARKER)) return source;
+  if (!source.includes("sectionKey:`environment`") || !source.includes("onOpenPullRequestSidePanel")) return null;
+
+  const required = ["Lv", "Uv", "Wv", "Hv", "Bb", "zb", "Lb", "Fb"];
+  let patched = source;
+  for (const name of required) {
+    const result = patchFunctionBody(patched, name, (body) => {
+      const withBinding = addIssuesCallbackBinding(body);
+      return withBinding == null ? body : withBinding;
+    });
+    if (!result.matched || result.source === patched && !findFunctionRange(patched, name)) return null;
+    patched = result.source;
+  }
+  for (const [name, child] of [["Lv", null], ["Uv", "Lv"], ["Wv", "Lv"], ["Hv", null], ["Bb", "Hv"], ["zb", "Bb"], ["Lb", "zb"], ["Fb", "zb"], ["ZS", "Fb"], ["KS", "ZS"]]) {
+    if (child == null) continue;
+    if (findFunctionRange(patched, name) == null) continue;
+    const result = patchFunctionBody(patched, name, (body) => addIssuesCallbackToCall(body, child));
+    if (!result.matched) return null;
+    patched = result.source;
+  }
+
+  const range = findFunctionRange(patched, "Lv");
+  if (range == null) return null;
+  let body = patched.slice(range.start, range.end);
+  const jsxAlias = body.match(/\(0,([A-Za-z_$][\w$]*)\.(?:jsx|jsxs)\)\([A-Za-z_$][\w$]*\.Section,\{sectionKey:`environment`/u)?.[1];
+  const componentAlias = body.match(/\(0,[A-Za-z_$][\w$]*\.(?:jsx|jsxs)\)\(([A-Za-z_$][\w$]*)\.Section,\{sectionKey:`environment`/u)?.[1];
+  if (jsxAlias == null || componentAlias == null) return null;
+  const action = `const ${ISSUES_ENVIRONMENT_MARKER}=(0,${jsxAlias}.jsx)(${componentAlias}.ItemButton,{onClick:()=>{codexLinuxIssuesOpen?.()},children:(0,${jsxAlias}.jsx)(${componentAlias}.ItemLabel,{children:\`Issues\`})});`;
+  body = `${body.slice(0, body.indexOf("{") + 1)}${action}${body.slice(body.indexOf("{") + 1)}`;
+  const environmentIndex = body.indexOf("sectionKey:`environment`");
+  const childrenStart = body.indexOf("children:[", environmentIndex);
+  const childrenEnd = childrenStart === -1 ? -1 : body.indexOf("]", childrenStart);
+  if (childrenStart === -1 || childrenEnd === -1) return null;
+  body = `${body.slice(0, childrenEnd)},${ISSUES_ENVIRONMENT_MARKER}${body.slice(childrenEnd)}`;
+  return `${patched.slice(0, range.start)}${body}${patched.slice(range.end)}`;
+}
+
+function patchIssuesSummaryAssets(extractedDir) {
+  const { entries } = readWebviewAssets(extractedDir);
+  const result = findOne(entries, ({ source }) => source.includes("sectionKey:`environment`") && source.includes("function Lv"), "Environment summary assets");
+  if (result.error) return driftResult(result.error);
+  const entry = result.entry;
+  const patched = patchIssuesSummaryAsset(entry.source);
+  if (patched == null) return driftResult("Environment summary callback anchors did not match");
+  if (patched === entry.source) return { matched: true, changed: 0 };
+  fs.writeFileSync(entry.filePath, patched, "utf8");
+  return { matched: true, changed: 1 };
+}
+
+function patchIssuesSidePanelAssets(extractedDir) {
+  const { entries } = readWebviewAssets(extractedDir);
+  const result = findOne(entries, ({ source }) => source.includes("function cl(") && source.includes("function du(") && source.includes("function fu(") && source.includes("pull-request:"), "local conversation side-panel assets");
+  if (result.error) return driftResult(result.error);
+  const entry = result.entry;
+  if (entry.source.includes(ISSUES_SIDE_PANEL_MARKER)) return { matched: true, changed: 0 };
+  const icon = findCircleDotImport(entries);
+  if (icon == null) return driftResult("no unique circle-dot icon asset found for Issues side panel");
+  const clRange = findFunctionRange(entry.source, "cl");
+  if (clRange == null) return driftResult("Pull Request side-panel opener anchor did not match");
+  const clBody = entry.source.slice(clRange.start, clRange.end);
+  const reactAlias = entry.source.match(/\bvar ([A-Za-z_$][\w$]*),/)?.[1];
+  const locationAlias = clBody.match(/\b([A-Za-z_$][\w$]*)\(e,o\)\?\?a/)?.[1];
+  const openTabs = clBody.match(/\b([A-Za-z_$][\w$]*)\(s\)\.openTab\(e,([A-Za-z_$][\w$]*)/)?.slice(1);
+  const activateAlias = clBody.match(/\b([A-Za-z_$][\w$]*)\(e,s\)/)?.[1];
+  if (reactAlias == null || locationAlias == null || openTabs == null || activateAlias == null) {
+    return driftResult("Pull Request side-panel aliases did not match");
+  }
+  const [openTabsAlias, pullRequestTab] = openTabs;
+  let patched = `import codexLinuxGithubIssuesIcon from \"./${icon.name}\";${entry.source}`;
+  const opener = `const codexLinuxGithubIssuesPanel=${reactAlias}.lazy(()=>import(\`/github-issues-tab.mjs\`).then(issuesModule=>({default:issuesModule.createIssuesSidePanel({React:${reactAlias},components:{},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope){const side=${locationAlias}(scope,\`issues\`)??\`right\`;${openTabsAlias}(side).openTab(scope,codexLinuxGithubIssuesPanel,{activate:!0,defaultState:()=>({}),icon:${reactAlias}.createElement(codexLinuxGithubIssuesIcon,{className:\`icon-xs shrink-0\`}),id:\`issues\`,props:{},title:\`Issues\`,tooltip:\`Issues\`});${activateAlias}(scope,side);return!0}`;
+  const clIndex = patched.indexOf("function cl(");
+  patched = `${patched.slice(0, clIndex)}${opener}${patched.slice(clIndex)}`;
+  const duResult = patchFunctionBody(patched, "du", (body) => {
+    const callback = `onOpenIssuesSidePanel:()=>{${ISSUES_SIDE_PANEL_MARKER}(n,{hostId:s})}`;
+    return body.replace(/onOpenPullRequestSidePanel:S,onOpenSubagentsPanel:x/g, `onOpenPullRequestSidePanel:S,${callback},onOpenSubagentsPanel:x`);
+  });
+  if (!duResult.matched || duResult.source === patched) return driftResult("local conversation du callback anchor did not match");
+  patched = duResult.source;
+  const fuResult = patchFunctionBody(patched, "fu", (body) => {
+    const withBinding = addIssuesCallbackBinding(body);
+    if (withBinding == null) return body;
+    return addIssuesCallbackToCall(withBinding, "yo");
+  });
+  if (!fuResult.matched || fuResult.source === patched) return driftResult("local conversation fu callback anchor did not match");
+  patched = fuResult.source;
+  if (!patched.includes(`onOpenIssuesSidePanel:()=>{${ISSUES_SIDE_PANEL_MARKER}`) || !patched.includes("onOpenIssuesSidePanel:codexLinuxIssuesOpen")) return driftResult("local conversation Issues callback anchors did not match");
+  fs.writeFileSync(entry.filePath, patched, "utf8");
+  return { matched: true, changed: 1 };
+}
+
 function patchIssuesNavigationAssets(extractedDir) {
   const { entries } = readWebviewAssets(extractedDir);
   if (!entries.some(({ source }) => source.includes(ISSUES_ROUTE_MARKER))) {
@@ -370,11 +534,19 @@ const descriptors = [
     status: optionalDriftStatus,
   },
   {
-    id: "github-issues-navigation",
+    id: "github-issues-summary",
     phase: "extracted-app:post-webview",
     order: 20_933,
     ciPolicy: "optional",
-    apply: patchIssuesNavigationAssets,
+    apply: patchIssuesSummaryAssets,
+    status: optionalDriftStatus,
+  },
+  {
+    id: "github-issues-side-panel",
+    phase: "extracted-app:post-webview",
+    order: 20_934,
+    ciPolicy: "optional",
+    apply: patchIssuesSidePanelAssets,
     status: optionalDriftStatus,
   },
 ];
@@ -386,7 +558,11 @@ module.exports = {
   optionalDriftStatus,
   walkJavaScriptFiles,
   patchIssuesRouteAssets,
+  patchIssuesSummaryAssets,
+  patchIssuesSidePanelAssets,
   patchIssuesNavigationAssets,
   ISSUES_ROUTE_MARKER,
   ISSUES_NAV_MARKER,
+  ISSUES_ENVIRONMENT_MARKER,
+  ISSUES_SIDE_PANEL_MARKER,
 };

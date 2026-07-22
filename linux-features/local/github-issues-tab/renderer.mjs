@@ -437,7 +437,7 @@ function tokenStyles() {
 }
 
 function createStyles() {
-  return `.github-issues-route button,.github-issues-route input{font:inherit}.github-issues-route button:focus-visible,.github-issues-route input:focus-visible,.github-issues-route a:focus-visible,.github-issues-route [role="button"]:focus-visible{outline:2px solid var(--color-token-text-link-foreground, var(--color-token-link, currentColor));outline-offset:2px}.github-issues-route button{cursor:pointer}.github-issues-route button[aria-pressed="true"]{font-weight:600}.github-issues-route a{color:var(--color-token-text-link-foreground, var(--color-token-link, currentColor))}.github-issues-route-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.github-issues-route-main{display:grid;grid-template-columns:minmax(280px,36%) minmax(0,1fr);flex:1;min-height:0}.github-issues-route-inbox{min-width:0;overflow:auto;border-right:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-width:0;overflow:auto;padding:18px 22px}@media (max-width:760px){.github-issues-route-toolbar input{min-width:120px;flex:1}.github-issues-route-main{display:flex;flex-direction:column}.github-issues-route-inbox{max-height:42vh;border-right:0;border-bottom:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-height:360px;padding:16px}}`;
+  return `.github-issues-route button,.github-issues-route input{font:inherit}.github-issues-route button:focus-visible,.github-issues-route input:focus-visible,.github-issues-route a:focus-visible,.github-issues-route [role="button"]:focus-visible{outline:2px solid var(--color-token-text-link-foreground, var(--color-token-link, currentColor));outline-offset:2px}.github-issues-route button{cursor:pointer}.github-issues-route button[aria-pressed="true"]{font-weight:600}.github-issues-route a{color:var(--color-token-text-link-foreground, var(--color-token-link, currentColor))}.github-issues-route-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.github-issues-route-main{display:grid;grid-template-columns:minmax(280px,36%) minmax(0,1fr);flex:1;min-height:0}.github-issues-route-inbox{min-width:0;overflow:auto;border-right:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-width:0;overflow:auto;padding:18px 22px}.github-issues-route-compact .github-issues-route-main{display:flex;flex-direction:column}.github-issues-route-compact .github-issues-route-inbox{max-height:42vh;border-right:0;border-bottom:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-compact .github-issues-route-detail{min-height:360px;padding:16px}@media (max-width:760px){.github-issues-route-toolbar input{min-width:120px;flex:1}.github-issues-route-main{display:flex;flex-direction:column}.github-issues-route-inbox{max-height:42vh;border-right:0;border-bottom:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-height:360px;padding:16px}}`;
 }
 
 function node(React, type, props, ...children) {
@@ -582,6 +582,7 @@ export function createIssuesRoute(deps = {}) {
   const Markdown = deps.Markdown;
   const openExternal = deps.openExternal;
   const components = deps.components || {};
+  const compact = deps.compact === true;
 
   function IssuesRoute() {
     const [state, dispatch] = React.useReducer(issuesReducer, undefined, initialIssuesState);
@@ -744,7 +745,7 @@ export function createIssuesRoute(deps = {}) {
     const detailRateLimit = rateLimitText(state.detail.rateLimit);
     const capabilitiesRateLimit = rateLimitText(state.capabilities.rateLimit);
     const timelineRateLimit = rateLimitText(state.timeline.rateLimit);
-    return node(React, "div", { className: "github-issues-route", style },
+    return node(React, "div", { className: compact ? "github-issues-route github-issues-route-compact" : "github-issues-route", style },
       node(React, "style", null, createStyles()),
       node(React, "header", { style: { display: "flex", alignItems: "center", gap: "12px", padding: "14px 18px", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
         node(React, "strong", null, "Issues"),
@@ -818,4 +819,8 @@ export function createIssuesRoute(deps = {}) {
   }
 
   return IssuesRoute;
+}
+
+export function createIssuesSidePanel(deps = {}) {
+  return createIssuesRoute({ ...deps, compact: true });
 }

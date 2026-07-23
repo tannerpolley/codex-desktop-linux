@@ -207,6 +207,19 @@ function applyMainBridgePatch(source) {
     }
   }
 
+  // 26.715 moved the trusted IPC registrations into the shared main bundle
+  // and no longer leaves the message channel literal beside an ipcMain.handle
+  // call. Reuse the trusted predicate from the existing context-menu handler.
+  const modernTrustedHandler = source.match(
+    /(function\s+[A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{return\s+([A-Za-z_$][\w$]*)\.ipcMain\.handle\([^,]+,async\([^,]+,[^)]*\)=>\{if\(!\2\([^)]*\)\)return;)/u,
+  );
+  if (modernTrustedHandler != null) {
+    const insertAt = modernTrustedHandler.index;
+    const ipcMainSymbol = modernTrustedHandler[3] + ".ipcMain";
+    const trustedEventSymbol = modernTrustedHandler[2];
+    return `${source.slice(0, insertAt)}${mainBridgeSource(ipcMainSymbol, trustedEventSymbol)}${source.slice(insertAt)}`;
+  }
+
   warn("Could not identify an existing trusted ipcMain.handle registration", "GitHub Issues main bridge patch");
   return source;
 }

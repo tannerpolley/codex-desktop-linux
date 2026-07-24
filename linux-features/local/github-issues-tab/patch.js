@@ -130,6 +130,7 @@ function captureRouteShape(source) {
     .filter((match) => match.index < routeTableIndex && source.includes(`${match[1]}.Suspense`));
   const react = reactCandidates.at(-1)?.[1]
     ?? source.match(/\b(?:const|let|var)\s+(React)\s*=/)?.[1]
+    ?? routeEntry[2]
     ?? null;
   if (react == null) return null;
   const declarationKeyword = lazyMatch[0].match(/^(?:const|let|var)\b/)?.[0] ?? null;
@@ -140,10 +141,12 @@ function captureRouteShape(source) {
     if (expressionDelimiter !== "," && expressionDelimiter !== ";") return null;
     const declarationStart = source.lastIndexOf("var ", lazyMatch.index);
     const declarationEnd = declarationStart === -1 ? -1 : source.indexOf("=", declarationStart);
-    if (declarationEnd === -1 || declarationEnd >= lazyMatch.index) return null;
-    const declaredNames = source.slice(declarationStart + 4, declarationEnd).split(",").map((name) => name.trim());
-    if (!declaredNames.includes(react) || !declaredNames.includes(lazyMatch[1])) return null;
-    variableInsertAt = declarationStart + 4;
+    if (declarationEnd !== -1 && declarationEnd < lazyMatch.index) {
+      const declaredNames = source.slice(declarationStart + 4, declarationEnd).split(",").map((name) => name.trim());
+      if (declaredNames.includes(react) && declaredNames.includes(lazyMatch[1])) {
+        variableInsertAt = declarationStart + 4;
+      }
+    }
   }
   return {
     entryPrefix: routeEntry[1],
@@ -259,8 +262,11 @@ function findCircleDotImport(entries) {
   const matches = entries.filter(({ name, source }) =>
     /^circle-dot-(?!dashed-).*\.js$/.test(name) && /export\{[^}]+ as default\}/.test(source),
   );
-  if (matches.length !== 1) return null;
-  return matches[0];
+  if (matches.length === 1) return matches[0];
+  // Rolldown may emit both a thin re-export and its implementation. Prefer
+  // the implementation so the injected import has a stable concrete module.
+  const implementations = matches.filter(({ source }) => source.includes("createLucideIcon"));
+  return implementations.length === 1 ? implementations[0] : null;
 }
 
 function patchIssuesRouteAssets(extractedDir) {
@@ -274,7 +280,8 @@ function patchIssuesRouteAssets(extractedDir) {
   const routeEntry = routeResult.entry;
   const dependencyResult = findPullRequestMarkdownDependency(entries);
   const routeShape = captureRouteShape(routeEntry.source);
-  if (dependencyResult.error) return driftResult(dependencyResult.error);
+  const modernPullRequestRoute = routeEntry.source.includes("PullRequestsRoute:e}=await import");
+  if (dependencyResult.error && !modernPullRequestRoute) return driftResult(dependencyResult.error);
   if (routeShape == null) return driftResult("Pull Requests lazy route or route-table anchor did not match");
 
   const routeAlreadyApplied = routeEntry.source.includes(ISSUES_ROUTE_MARKER);
@@ -282,10 +289,13 @@ function patchIssuesRouteAssets(extractedDir) {
 
   const markerExpression = `const ${ISSUES_ROUTE_MARKER}=true;`;
   const routeVariable = "codexLinuxGithubIssuesRoute";
-  const routeAssignment = `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const [issuesModule,markdownModule]=await Promise.all([import(\`/github-issues-tab.mjs\`),import(\`./${dependencyResult.dependency.actionName}\`)]);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:markdownModule.${dependencyResult.dependency.markdownExport},openExternal})})`;
+  const routeAssignment = modernPullRequestRoute
+    ? `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const issuesModule=await import(\`/github-issues-tab.mjs\`);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:null,openExternal})})`
+    : `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const [issuesModule,markdownModule]=await Promise.all([import(\`/github-issues-tab.mjs\`),import(\`./${dependencyResult.dependency.actionName}\`)]);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:markdownModule.${dependencyResult.dependency.markdownExport},openExternal})})`;
   let routeBody = routeEntry.source;
   if (routeShape.variableInsertAt == null) {
-    routeBody = `${routeBody.slice(0, routeShape.lazyInsertAt)}const ${routeAssignment};${routeBody.slice(routeShape.lazyInsertAt)}`;
+    const independentInsertAt = routeShape.lazyInsertAt + (routeShape.expressionDelimiter === "," ? 1 : 0);
+    routeBody = `${routeBody.slice(0, independentInsertAt)}const ${routeAssignment};${routeBody.slice(independentInsertAt)}`;
   } else {
     routeBody = `${routeBody.slice(0, routeShape.variableInsertAt)}${routeVariable},${routeBody.slice(routeShape.variableInsertAt)}`;
     const adjustedLazyInsertAt = routeShape.lazyInsertAt + routeVariable.length + 1;
@@ -374,6 +384,39 @@ function patchIssuesSummaryAsset(source) {
   if (source.includes(ISSUES_ENVIRONMENT_MARKER)) return source;
   if (!source.includes("sectionKey:`environment`") || !source.includes("onOpenPullRequestSidePanel")) return null;
 
+  // Current 26.721 bundles use jC/LC for the Environment summary and pass the
+  // side-panel opener directly through those two components.
+  if (findFunctionRange(source, "jC") != null && findFunctionRange(source, "LC") != null) {
+    let patched = source;
+    const bindResult = patchFunctionBody(patched, "jC", addIssuesCallbackBinding);
+    if (!bindResult.matched || bindResult.source === patched) return null;
+    patched = bindResult.source;
+    const jRange = findFunctionRange(patched, "jC");
+    if (jRange == null) return null;
+    let jBody = patched.slice(jRange.start, jRange.end);
+    const jsxMatch = jBody.match(/\(0,([A-Za-z_$][\w$]*)\.(?:jsx|jsxs)\)\(([A-Za-z_$][\w$]*)\.Section,\{sectionKey:`environment`/u);
+    if (jsxMatch == null) return null;
+    const [, jsxAlias, componentAlias] = jsxMatch;
+    const action = `const ${ISSUES_ENVIRONMENT_MARKER}=(0,${jsxAlias}.jsx)(${componentAlias}.ItemButton,{onClick:()=>{codexLinuxIssuesOpen?.()},children:(0,${jsxAlias}.jsx)(${componentAlias}.ItemLabel,{children:\`Issues\`})});`;
+    jBody = `${jBody.slice(0, jBody.indexOf("{") + 1)}${action}${jBody.slice(jBody.indexOf("{") + 1)}`;
+    const environmentIndex = jBody.indexOf("sectionKey:`environment`");
+    const childrenStart = jBody.indexOf("children:[", environmentIndex);
+    const childrenEnd = childrenStart === -1 ? -1 : jBody.indexOf("]", childrenStart);
+    if (childrenStart === -1 || childrenEnd === -1) return null;
+    jBody = `${jBody.slice(0, childrenEnd)},${ISSUES_ENVIRONMENT_MARKER}${jBody.slice(childrenEnd)}`;
+    patched = `${patched.slice(0, jRange.start)}${jBody}${patched.slice(jRange.end)}`;
+    const lcResult = patchFunctionBody(patched, "LC", (body) => {
+      const withBinding = addIssuesCallbackBinding(body);
+      if (withBinding == null) return body;
+      return withBinding.replace(
+        "onOpenPullRequestSidePanel:n,",
+        "onOpenPullRequestSidePanel:n,onOpenIssuesSidePanel:codexLinuxIssuesOpen,",
+      );
+    });
+    if (!lcResult.matched || lcResult.source === patched) return null;
+    return lcResult.source;
+  }
+
   // 26.715 consolidated the summary into Uy and threaded the PR opener
   // through Jx -> Qx -> $x -> Jy. Patch that stable callback chain directly.
   if (findFunctionRange(source, "Uy") != null && findFunctionRange(source, "Yy") != null) {
@@ -455,7 +498,7 @@ function patchIssuesSummaryAsset(source) {
 
 function patchIssuesSummaryAssets(extractedDir) {
   const { entries } = readWebviewAssets(extractedDir);
-  const result = findOne(entries, ({ source }) => source.includes("sectionKey:`environment`") && source.includes("function Lv"), "Environment summary assets");
+  const result = findOne(entries, ({ source }) => source.includes("sectionKey:`environment`") && (source.includes("function Lv") || source.includes("function jC")), "Environment summary assets");
   if (result.error) return driftResult(result.error);
   const entry = result.entry;
   const patched = patchIssuesSummaryAsset(entry.source);
@@ -467,6 +510,34 @@ function patchIssuesSummaryAssets(extractedDir) {
 
 function patchIssuesSidePanelAssets(extractedDir) {
   const { entries } = readWebviewAssets(extractedDir);
+  const current = entries.find(({ source }) => source.includes("function Xl(") && source.includes("pull-request:") && source.includes("openTab"));
+  if (current != null && !current.source.includes(ISSUES_SIDE_PANEL_MARKER)) {
+    const icon = findCircleDotImport(entries);
+    const xlRange = findFunctionRange(current.source, "Xl");
+    if (icon == null || xlRange == null) return driftResult(icon == null ? "no unique circle-dot icon asset found for Issues side panel" : "Pull Request side-panel opener anchor did not match");
+    const xlBody = current.source.slice(xlRange.start, xlRange.end);
+    const reactAlias = xlBody.match(/\(0,([A-Za-z_$][\w$]*)\.createElement\)/)?.[1];
+    const locationAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(e,s\)\?\?o/)?.[1];
+    const openTabsAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(c\)\.openTab\(e,/)?.[1];
+    const activateAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(e,c\)/)?.[1];
+    if (reactAlias == null || locationAlias == null || openTabsAlias == null || activateAlias == null) return driftResult("Pull Request side-panel aliases did not match");
+    let patched = `import codexLinuxGithubIssuesIcon from \"./${icon.name}\";${current.source}`;
+    const opener = `const codexLinuxGithubIssuesPanel=${reactAlias}.lazy(()=>import(\`/github-issues-tab.mjs\`).then(issuesModule=>({default:issuesModule.createIssuesSidePanel({React:${reactAlias},components:{},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope,{hostId}={}){const side=${locationAlias}(scope,\`issues\`)??\`right\`;${openTabsAlias}(side).openTab(scope,codexLinuxGithubIssuesPanel,{activate:!0,defaultState:()=>({}),icon:${reactAlias}.createElement(codexLinuxGithubIssuesIcon,{className:\`icon-xs shrink-0\`}),id:\`issues\`,props:{hostId},title:\`Issues\`,tooltip:\`Issues\`});${activateAlias}(scope,side);return!0}`;
+    const xlIndex = patched.indexOf("function Xl(");
+    patched = `${patched.slice(0, xlIndex)}${opener}${patched.slice(xlIndex)}`;
+    const rootResult = patchFunctionBody(patched, "$u", (body) => {
+      const injectAt = body.indexOf("let A=Ue(k),");
+      if (injectAt === -1) return body;
+      let next = `${body.slice(0, injectAt)}let codexLinuxIssuesOpen=()=>{${ISSUES_SIDE_PANEL_MARKER}(i,{hostId:l})};${body.slice(injectAt)}`;
+      return next.replaceAll(
+        "onOpenPullRequestSidePanel:A,onOpenSubagentsPanel:O",
+        "onOpenPullRequestSidePanel:A,onOpenIssuesSidePanel:codexLinuxIssuesOpen,onOpenSubagentsPanel:O",
+      );
+    });
+    if (!rootResult.matched || rootResult.source === patched) return driftResult("local conversation root callback anchor did not match");
+    fs.writeFileSync(current.filePath, rootResult.source, "utf8");
+    return { matched: true, changed: 1 };
+  }
   const modern = entries.find(({ source }) => source.includes("function Sl(") && source.includes("pull-request:") && source.includes("openTab"));
   if (modern != null && !modern.source.includes(ISSUES_SIDE_PANEL_MARKER)) {
     const icon = findCircleDotImport(entries);

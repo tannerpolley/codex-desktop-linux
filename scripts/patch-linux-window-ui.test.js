@@ -185,6 +185,7 @@ const {
   applyLinuxI18nGatePatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxSettingsSearchVisibilityPatch,
+  applyLinuxUserInputEscapeDismissPatch,
   applyLinuxSkillsListDedupePatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
@@ -1042,6 +1043,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "opaque-window-default-webview-index",
     "linux-window-controls-safe-area",
     "linux-tooltip-window-controls-collision",
+    "linux-user-input-escape-dismiss",
     "linux-thread-side-panel-native-tooltip",
     "linux-fast-mode-model-guard",
     "subagent-nickname-metadata-shape",
@@ -6305,6 +6307,29 @@ test("disables the upstream app sunset gate in the Linux wrapper webview", () =>
 
   assert.match(patched, /if\(!1&&ms\(`2929582856`\)\)\{/);
   assert.doesNotMatch(patched, /if\(ms\(`2929582856`\)\)\{/);
+});
+
+test("does not empty-dismiss a still-active user input request", () => {
+  const source = [
+    "function GVs(e){let{replyWithEmptyResponseOnDismiss:o}=e,c=o===void 0?!1:o,_=e.autoResolution;void `reply-with-user-input-response`;void `interrupt-conversation`;return c||_!=null?`empty`:`interrupt`}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxUserInputEscapeDismissPatch, source);
+  const context = {};
+  vm.runInNewContext(`${patched};this.dismiss=GVs`, context);
+
+  assert.equal(
+    context.dismiss({ autoResolution: { resolutionState: { status: "waiting-for-inactivity" } } }),
+    "interrupt",
+  );
+  assert.equal(
+    context.dismiss({ autoResolution: { resolutionState: { status: "snoozed" } } }),
+    "empty",
+  );
+  assert.equal(
+    context.dismiss({ replyWithEmptyResponseOnDismiss: true }),
+    "empty",
+  );
 });
 
 test("disables the upstream app sunset gate after minified alias drift", () => {

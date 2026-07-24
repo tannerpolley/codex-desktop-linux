@@ -706,6 +706,55 @@ function hasCompleteLinuxBrowserUseWebviewRemountStorePatch(source) {
   );
 }
 
+function applyLinuxUserInputEscapeDismissPatch(currentSource) {
+  const functionPattern =
+    /function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\{/gu;
+  const dismissConditionPattern =
+    /([A-Za-z_$][\w$]*)\|\|([A-Za-z_$][\w$]*)!=null/u;
+
+  let match;
+  while ((match = functionPattern.exec(currentSource)) != null) {
+    const openBrace = currentSource.indexOf("{", match.index);
+    const closeBrace = findMatchingBrace(currentSource, openBrace);
+    if (closeBrace === -1) {
+      continue;
+    }
+
+    const functionSource = currentSource.slice(match.index, closeBrace + 1);
+    if (
+      !functionSource.includes("reply-with-user-input-response") ||
+      !functionSource.includes("interrupt-conversation")
+    ) {
+      continue;
+    }
+
+    if (functionSource.includes("resolutionState.status===`snoozed`")) {
+      return currentSource;
+    }
+
+    const conditionMatch = functionSource.match(dismissConditionPattern);
+    if (conditionMatch == null) {
+      continue;
+    }
+
+    const patchedFunction = functionSource.replace(
+      dismissConditionPattern,
+      `${conditionMatch[1]}||${conditionMatch[2]}?.resolutionState.status===\`snoozed\``,
+    );
+    return `${currentSource.slice(0, match.index)}${patchedFunction}${currentSource.slice(closeBrace + 1)}`;
+  }
+
+  if (
+    currentSource.includes("reply-with-user-input-response") &&
+    currentSource.includes("interrupt-conversation")
+  ) {
+    console.warn(
+      "WARN: Could not find user input dismiss condition — skipping Linux request input escape patch",
+    );
+  }
+  return currentSource;
+}
+
 function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   if (hasCompleteLinuxBrowserUseWebviewRemountStorePatch(currentSource)) {
     return currentSource;
@@ -2279,6 +2328,7 @@ module.exports = {
   applyAutomationUpdateEagerToolPatch,
   matchesAutomationUpdateEagerToolContract,
   applyLinuxChatSearchHydrationPatch,
+  applyLinuxUserInputEscapeDismissPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseHiddenHostOwnershipPatch,

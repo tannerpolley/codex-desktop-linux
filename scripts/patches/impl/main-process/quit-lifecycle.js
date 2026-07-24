@@ -227,13 +227,38 @@ function applyLinuxExplicitTrayQuitPatch(currentSource) {
 
   const quitMarkerExpression = linuxExplicitQuitExpression();
 
+  const trayQuitNeedle = "{label:rB(this.appName),click:()=>{n.app.quit()}}";
+  const trayQuitPatch =
+    `{label:rB(this.appName),click:()=>{${quitMarkerExpression}n.app.quit()}}`;
   const patchedTrayQuitRegex =
-    /\{label:this\.systemQuitMenuItemLabel,click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),[A-Za-z_$][\w$]*\.app\.quit\(\)\}\}/;
+    /\{label:[^{}]+,click:\(\)=>\{typeof codexLinuxPrepareForExplicitQuit===`function`\?codexLinuxPrepareForExplicitQuit\(\):typeof codexLinuxMarkQuitInProgress===`function`&&codexLinuxMarkQuitInProgress\(\),[A-Za-z_$][\w$]*\.app\.quit\(\)\}\}/;
   const trayQuitRegex =
+    /\{label:rB\(([^)]+)\),click:\(\)=>\{([A-Za-z_$][\w$]*)\.app\.quit\(\)\}\}/g;
+  const genericTrayQuitRegex =
+    /\{label:([A-Za-z_$][\w$]*\(this\.appName\)),click:\(\)=>\{([A-Za-z_$][\w$]*)\.app\.quit\(\)\}\}/g;
+  const memberLabelTrayQuitRegex =
     /\{label:this\.systemQuitMenuItemLabel,click:\(\)=>\{([A-Za-z_$][\w$]*)\.app\.quit\(\)\}\}/g;
   let patchedAny = false;
+  if (patchedSource.includes(trayQuitNeedle)) {
+    patchedAny = true;
+    patchedSource = patchedSource.split(trayQuitNeedle).join(trayQuitPatch);
+  }
   patchedSource = patchedSource.replace(
     trayQuitRegex,
+    (_match, appNameExpr, electronVar) => {
+      patchedAny = true;
+      return `{label:rB(${appNameExpr}),click:()=>{${quitMarkerExpression}${electronVar}.app.quit()}}`;
+    },
+  );
+  patchedSource = patchedSource.replace(
+    genericTrayQuitRegex,
+    (_match, labelExpression, electronVar) => {
+      patchedAny = true;
+      return `{label:${labelExpression},click:()=>{${quitMarkerExpression}${electronVar}.app.quit()}}`;
+    },
+  );
+  patchedSource = patchedSource.replace(
+    memberLabelTrayQuitRegex,
     (_match, electronVar) => {
       patchedAny = true;
       return `{label:this.systemQuitMenuItemLabel,click:()=>{${quitMarkerExpression}${electronVar}.app.quit()}}`;
@@ -243,7 +268,7 @@ function applyLinuxExplicitTrayQuitPatch(currentSource) {
     !patchedAny &&
     !patchedTrayQuitRegex.test(patchedSource) &&
     patchedSource.includes("getNativeTrayMenuItems(){") &&
-    patchedSource.includes("systemQuitMenuItemLabel")
+    (patchedSource.includes("label:rB(") || patchedSource.includes("label:this.systemQuitMenuItemLabel") || patchedSource.includes("role:`quit`"))
   ) {
     console.warn("WARN: Could not find tray quit menu handler — skipping Linux explicit tray quit patch");
   }

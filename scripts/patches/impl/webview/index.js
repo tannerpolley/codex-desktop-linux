@@ -1829,11 +1829,11 @@ function applySubagentNicknameMetadataPatch(currentSource) {
     patchedSource = patchedSource.replace(sourceShapeNeedle, sourceShapePatch);
   } else {
     const sourceShapeRegex =
-      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return`subAgent`in \2\?\2\.subAgent:null\}function ([A-Za-z_$][\w$]*)\(/u;
+      /function ([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{return`subAgent`in \2\?\2\.subAgent:null\}/u;
     if (sourceShapeRegex.test(patchedSource)) {
       patchedSource = patchedSource.replace(
         sourceShapeRegex,
-        "function $1($2){return`subAgent`in $2?$2.subAgent:`subagent`in $2?$2.subagent:null}function $3(",
+        "function $1($2){return`subAgent`in $2?$2.subAgent:`subagent`in $2?$2.subagent:null}",
       );
     }
   }
@@ -2503,6 +2503,12 @@ function applyLinuxFastModeModelGuardPatch(currentSource) {
   );
   if (patchedSource !== currentSource) {
     return patchedSource;
+  }
+
+  // Current upstream bundles already use optional chaining for service-tier
+  // reads. Treat that shape as safely handled instead of reporting drift.
+  if (currentSource.includes("serviceTiers?.find") || currentSource.includes("serviceTiers??[]")) {
+    return currentSource;
   }
 
   if (/\bserviceTiers\.length\s*>\s*0/u.test(currentSource)) {

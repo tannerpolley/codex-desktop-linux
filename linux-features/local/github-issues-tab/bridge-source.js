@@ -211,7 +211,7 @@ function applyMainBridgePatch(source) {
   // and no longer leaves the message channel literal beside an ipcMain.handle
   // call. Reuse the trusted predicate from the existing context-menu handler.
   const modernTrustedHandler = source.match(
-    /(function\s+[A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{return\s+([A-Za-z_$][\w$]*)\.ipcMain\.handle\([^,]+,async\([^,]+,[^)]*\)=>\{if\(!\2\([^)]*\)\)return;)/u,
+    /(function\s+[A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{return\s+([A-Za-z_$][\w$]*)\.ipcMain\.handle\([^,]+,async\([^,]+,[^)]*\)=>\{if\(!\2\([^)]*\)\)return(?:;|\{))/u,
   );
   if (modernTrustedHandler != null) {
     const insertAt = modernTrustedHandler.index;

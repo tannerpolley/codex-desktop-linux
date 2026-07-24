@@ -16,7 +16,7 @@ module.exports = [
     // Older DMGs emit granular hook chunks; 26.623+ merges them into the shared
     // `app-initial~app-main~…` bundle. Match both so the patch keeps targeting
     // the chunk that actually carries the subagent metadata module.
-    pattern: /^(?:app-server-manager-signals|use-host-config|app-initial(?:~app-main~|[-~][A-Za-z0-9_-]+\.).*).*\.js$/,
+    pattern: /^(?:app-server-manager-signals|use-host-config|app-initial~app-main~.*|app-initial[-~][A-Za-z0-9_-]+)\.js$/,
     missingDescription: "subagent metadata webview bundle",
     skipDescription: "subagent nickname metadata shape patch",
     apply: applySubagentNicknameMetadataPatch,

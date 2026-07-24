@@ -185,6 +185,7 @@ const {
   applyLinuxI18nGatePatch,
   applyLinuxOpaqueWindowsDefaultPatch,
   applyLinuxSettingsSearchVisibilityPatch,
+  applyLinuxUserInputAutoResolutionOptOutPatch,
   applyLinuxUserInputEscapeDismissPatch,
   applyLinuxSkillsListDedupePatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
@@ -1043,6 +1044,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "opaque-window-default-webview-index",
     "linux-window-controls-safe-area",
     "linux-tooltip-window-controls-collision",
+    "linux-user-input-auto-resolution-opt-out",
     "linux-user-input-escape-dismiss",
     "linux-thread-side-panel-native-tooltip",
     "linux-fast-mode-model-guard",
@@ -5674,17 +5676,19 @@ test("renders the generated Linux desktop settings page with working switches", 
     assert.ok(text.includes("Compact prompt window"));
     assert.ok(text.includes("System tray"));
     assert.ok(text.includes("Warm start"));
+    assert.ok(text.includes("Keep questions open"));
     assert.ok(text.includes("Install updates when you close ChatGPT"));
 
     const switches = rendered.filter(
       (value) => typeof value === "object" && value.type === "button" && value.props.role === "switch",
     );
-    assert.equal(switches.length, 4);
+    assert.equal(switches.length, 5);
     assert.deepEqual(
       switches.map((element) => element.props["aria-label"]),
       [
         "Compact prompt window",
         "System tray",
+        "Keep questions open",
         "Warm start",
         "Install updates when you close ChatGPT",
       ],
@@ -6330,6 +6334,37 @@ test("does not empty-dismiss a still-active user input request", () => {
     context.dismiss({ replyWithEmptyResponseOnDismiss: true }),
     "empty",
   );
+});
+
+test("allows the Linux setting to disable request input auto-resolution", () => {
+  const source = [
+    "function gHs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null;let v=_.resolutionState.status===`scheduled`?{deadlineMs:_.resolutionState.deadlineMs}:void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return v}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
+  assert.match(patched, /codexLinuxDisableRequestUserInputAutoResolution/);
+  assert.match(patched, /requestUserInputAutoResolution\.snooze/);
+
+  const snoozed = [];
+  const context = {
+    UZe: {},
+    Y: () => true,
+    nHs: { useEffect: (effect) => effect() },
+    gp: { requestUserInputAutoResolution: { snooze: (request) => snoozed.push(request) } },
+    Fo: () => ({ requestId: "request-1", resolutionState: { status: "scheduled" } }),
+    FQ: {},
+  };
+  vm.runInNewContext(`${patched};this.requestInput=gHs`, context);
+  context.requestInput({ conversationId: "conversation-1", hostId: "local", request: { requestId: "request-1" } });
+
+  assert.equal(JSON.stringify(snoozed), JSON.stringify([
+    { conversationId: "conversation-1", hostId: "local", requestId: "request-1" },
+  ]));
+
+  snoozed.length = 0;
+  context.Y = () => false;
+  context.requestInput({ conversationId: "conversation-1", hostId: "local", request: { requestId: "request-1" } });
+  assert.deepEqual(snoozed, []);
 });
 
 test("disables the upstream app sunset gate after minified alias drift", () => {

@@ -755,6 +755,64 @@ function applyLinuxUserInputEscapeDismissPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
+  const settingKey = "codex-linux-disable-request-user-input-auto-resolution";
+  const marker = `codexLinuxDisableRequestUserInputAutoResolution`;
+  const functionPattern = /function [A-Za-z_$][\w$]*\([^)]*\)\{/gu;
+  let patchedSource = currentSource;
+  let changed = false;
+  let match;
+
+  while ((match = functionPattern.exec(currentSource)) != null) {
+    const openBrace = currentSource.indexOf("{", match.index);
+    const closeBrace = findMatchingBrace(currentSource, openBrace);
+    if (closeBrace === -1) {
+      continue;
+    }
+
+    const functionSource = currentSource.slice(match.index, closeBrace + 1);
+    if (functionSource.includes(marker)) {
+      continue;
+    }
+
+    let patchedFunction = functionSource;
+    if (
+      !functionSource.includes("reply-with-user-input-response") ||
+      !functionSource.includes("interrupt-conversation")
+    ) {
+      continue;
+    }
+    const stateMatch = functionSource.match(
+      /([;,])([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\?\.requestId===([A-Za-z_$][\w$]*)\.requestId\?\3:null([,;])/u,
+    );
+    if (stateMatch == null) {
+      continue;
+    }
+    const [, , stateVar, , requestInputVar] = stateMatch;
+    const insertion =
+      `let ${marker}=Y(UZe,\`${settingKey}\`)===!0;(0,nHs.useEffect)(()=>{if(!${marker}||${stateVar}==null||${stateVar}.resolutionState.status===\`snoozed\`)return;gp.requestUserInputAutoResolution.snooze({conversationId:n,hostId:i,requestId:${requestInputVar}.requestId})},[n,i,${requestInputVar}.requestId,${stateVar},${marker}]);`;
+    const declarationEnd = functionSource.indexOf(";", stateMatch.index);
+    if (declarationEnd === -1) {
+      continue;
+    }
+    patchedFunction =
+      functionSource.slice(0, declarationEnd + 1) +
+      insertion +
+      functionSource.slice(declarationEnd + 1);
+    if (patchedFunction !== functionSource) {
+      patchedSource = patchedSource.replace(functionSource, patchedFunction);
+      changed = true;
+    }
+  }
+
+  if (!changed && currentSource.includes("reply-with-user-input-response") && !currentSource.includes(marker)) {
+    console.warn(
+      "WARN: Could not find Linux request input auto-resolution opt-out seams — skipping timer opt-out patch",
+    );
+  }
+  return patchedSource;
+}
+
 function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   if (hasCompleteLinuxBrowserUseWebviewRemountStorePatch(currentSource)) {
     return currentSource;
@@ -2329,6 +2387,7 @@ module.exports = {
   matchesAutomationUpdateEagerToolContract,
   applyLinuxChatSearchHydrationPatch,
   applyLinuxUserInputEscapeDismissPatch,
+  applyLinuxUserInputAutoResolutionOptOutPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseHiddenHostOwnershipPatch,

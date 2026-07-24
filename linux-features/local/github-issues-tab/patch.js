@@ -510,7 +510,7 @@ function patchIssuesSummaryAssets(extractedDir) {
 
 function patchIssuesSidePanelAssets(extractedDir) {
   const { entries } = readWebviewAssets(extractedDir);
-  const current = entries.find(({ source }) => source.includes("function Xl(") && source.includes("pull-request:") && source.includes("openTab"));
+  const current = entries.find(({ source }) => source.includes("function Xl(e,{hostId:") && source.includes("pull-request:") && source.includes("openTab"));
   if (current != null && !current.source.includes(ISSUES_SIDE_PANEL_MARKER)) {
     const icon = findCircleDotImport(entries);
     const xlRange = findFunctionRange(current.source, "Xl");

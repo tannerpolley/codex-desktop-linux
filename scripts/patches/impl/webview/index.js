@@ -759,6 +759,27 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
   const settingKey = "codex-linux-disable-request-user-input-auto-resolution";
   const marker = `codexLinuxDisableRequestUserInputAutoResolution`;
   const functionPattern = /function [A-Za-z_$][\w$]*\([^)]*\)\{/gu;
+
+  function findReactNamespaceAlias(functionEnd) {
+    const moduleInitStart = currentSource.indexOf("=e((()=>{", functionEnd);
+    if (moduleInitStart === -1) {
+      return null;
+    }
+    const nextModuleInitStart = currentSource.indexOf(
+      "=e((()=>{",
+      moduleInitStart + 1,
+    );
+    const moduleSource = currentSource.slice(
+      moduleInitStart,
+      nextModuleInitStart === -1 ? moduleInitStart + 4096 : nextModuleInitStart,
+    );
+    return (
+      moduleSource.match(/\b([A-Za-z_$][\w$]*)=r\(o\(\),1\)/u)?.[1] ??
+      currentSource.match(/\b([A-Za-z_$][\w$]*)=r\(o\(\),1\)/u)?.[1] ??
+      null
+    );
+  }
+
   let patchedSource = currentSource;
   let changed = false;
   let match;
@@ -789,8 +810,12 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
       continue;
     }
     const [, , stateVar, , requestInputVar] = stateMatch;
+    const reactVar = findReactNamespaceAlias(closeBrace + 1);
+    if (reactVar == null) {
+      continue;
+    }
     const insertion =
-      `let ${marker}=Y(UZe,\`${settingKey}\`)===!0;(0,nHs.useEffect)(()=>{if(!${marker}||${stateVar}==null||${stateVar}.resolutionState.status===\`snoozed\`)return;gp.requestUserInputAutoResolution.snooze({conversationId:n,hostId:i,requestId:${requestInputVar}.requestId})},[n,i,${requestInputVar}.requestId,${stateVar},${marker}]);`;
+      `let ${marker}=Y(UZe,\`${settingKey}\`)===!0;(0,${reactVar}.useEffect)(()=>{if(!${marker}||${stateVar}==null||${stateVar}.resolutionState.status===\`snoozed\`)return;gp.requestUserInputAutoResolution.snooze({conversationId:n,hostId:i,requestId:${requestInputVar}.requestId})},[n,i,${requestInputVar}.requestId,${stateVar},${marker}]);`;
     const declarationEnd = functionSource.indexOf(";", stateMatch.index);
     if (declarationEnd === -1) {
       continue;

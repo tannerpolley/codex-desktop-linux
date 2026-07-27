@@ -6338,18 +6338,27 @@ test("does not empty-dismiss a still-active user input request", () => {
 
 test("allows the Linux setting to disable request input auto-resolution", () => {
   const source = [
-    "function gHs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null;let v=_.resolutionState.status===`scheduled`?{deadlineMs:_.resolutionState.deadlineMs}:void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return v}",
+    "function gHs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null;let v=_.resolutionState.status===`scheduled`?{deadlineMs:_.resolutionState.deadlineMs}:void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return v}var DHs,OHs,MHs=e((()=>{DHs=c(),OHs=r(o(),1)}));",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
   assert.match(patched, /codexLinuxDisableRequestUserInputAutoResolution/);
+  assert.match(patched, /\(0,OHs\.useEffect\)/);
+  assert.doesNotMatch(patched, /\(0,nHs\.useEffect\)/);
   assert.match(patched, /requestUserInputAutoResolution\.snooze/);
 
   const snoozed = [];
   const context = {
     UZe: {},
     Y: () => true,
-    nHs: { useEffect: (effect) => effect() },
+    OHs: { useEffect: (effect) => effect() },
+    e: (initialize) => {
+      initialize();
+      return {};
+    },
+    c: () => ({ c: () => {} }),
+    r: () => ({ useEffect: (effect) => effect() }),
+    o: () => ({}),
     gp: { requestUserInputAutoResolution: { snooze: (request) => snoozed.push(request) } },
     Fo: () => ({ requestId: "request-1", resolutionState: { status: "scheduled" } }),
     FQ: {},

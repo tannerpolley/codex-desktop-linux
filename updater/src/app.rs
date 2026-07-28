@@ -156,12 +156,21 @@ fn effective_auto_install(config: &RuntimeConfig) -> bool {
     crate::config::settings_auto_install_override().unwrap_or(config.auto_install_on_app_exit)
 }
 
+fn current_installed_package_version() -> String {
+    #[cfg(test)]
+    if let Ok(version) = std::env::var("CODEX_UPDATE_MANAGER_TEST_INSTALLED_VERSION") {
+        return version;
+    }
+
+    install::installed_package_version()
+}
+
 fn sync_runtime_state(config: &RuntimeConfig, state: &mut PersistedState) {
     state.auto_install_on_app_exit = effective_auto_install(config);
     if state.status != UpdateStatus::WaitingForAppExit {
         state.waiting_for_app_exit_auto_install = false;
     }
-    state.installed_version = install::installed_package_version();
+    state.installed_version = current_installed_package_version();
 }
 
 fn sync_and_persist(
@@ -305,7 +314,10 @@ fn run_daemon_startup_maintenance(
     }
 
     sync_and_persist(config, state, paths)?;
-    recover_interrupted_install(state, paths)?;
+    let interrupted_recovery = recover_interrupted_install(state, paths)?;
+    if interrupted_recovery.should_notify_installed() {
+        let _ = maybe_notify_installed(state, paths, config.notifications);
+    }
     complete_current_dmg_update_if_already_installed(config, state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
@@ -1083,7 +1095,10 @@ async fn run_check_cycle_with_options(
     // before the lock could overwrite an active checker's workspace metadata.
     reload_state_from_disk(config, state, paths)?;
     if recover_entrypoint_state {
-        recover_interrupted_install(state, paths)?;
+        let interrupted_recovery = recover_interrupted_install(state, paths)?;
+        if interrupted_recovery.should_notify_installed() {
+            let _ = maybe_notify_installed(state, paths, config.notifications);
+        }
         complete_current_dmg_update_if_already_installed(config, state, paths)?;
         normalize_workspace_dir_and_persist(state, paths)?;
         maybe_notify_cli_missing(state, paths, config.notifications)?;
@@ -1244,7 +1259,13 @@ async fn reconcile_pending_install(
     paths: &RuntimePaths,
 ) -> Result<()> {
     sync_runtime_state(config, state);
-    recover_interrupted_install(state, paths)?;
+    let interrupted_recovery = recover_interrupted_install(state, paths)?;
+    if interrupted_recovery.completed() {
+        if interrupted_recovery.should_notify_installed() {
+            let _ = maybe_notify_installed(state, paths, config.notifications);
+        }
+        return Ok(());
+    }
     let pending_recovery = complete_pending_install_if_already_installed(state, paths)?;
     if pending_recovery.completed() {
         if pending_recovery.should_notify_installed() {
@@ -1418,7 +1439,14 @@ async fn run_install_ready_locked(
     paths: &RuntimePaths,
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
-    recover_interrupted_install(state, paths)?;
+    let interrupted_recovery = recover_interrupted_install(state, paths)?;
+    if interrupted_recovery.completed() {
+        if interrupted_recovery.should_notify_installed() {
+            let _ = maybe_notify_installed(state, paths, config.notifications);
+        }
+        println!("ChatGPT Desktop update is already installed or superseded.");
+        return Ok(());
+    }
 
     if complete_current_dmg_update_if_already_installed(config, state, paths)? {
         println!("ChatGPT Desktop is already up to date.");
@@ -1666,9 +1694,12 @@ fn complete_pending_install_if_already_installed(
     Ok(recovery)
 }
 
-fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
+fn recover_interrupted_install(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<PendingInstallRecovery> {
     if state.status != UpdateStatus::Installing {
-        return Ok(());
+        return Ok(PendingInstallRecovery::NoChange);
     }
 
     if let Some(candidate_version) = state.candidate_version.clone().filter(|candidate| {
@@ -1676,6 +1707,11 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
     }) {
         let candidate_is_installed =
             installed_version_matches_candidate(&state.installed_version, &candidate_version);
+        let recovery = if candidate_is_installed {
+            PendingInstallRecovery::CandidateInstalled
+        } else {
+            PendingInstallRecovery::SupersededByInstalledVersion
+        };
 
         state.status = UpdateStatus::Installed;
         state.waiting_for_app_exit_auto_install = false;
@@ -1688,8 +1724,8 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
         state.notified_events.clear();
         cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
         persist_state(paths, state)?;
-        info!("recovered interrupted install state because the candidate version is already installed");
-        return Ok(());
+        info!("recovered interrupted install state because the candidate version is already installed or superseded");
+        return Ok(recovery);
     }
 
     let Some(package_path) = state.artifact_paths.package_path.clone() else {
@@ -1698,7 +1734,7 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
             paths,
             "Previous install attempt was interrupted and no package artifact is recorded",
         )?;
-        return Ok(());
+        return Ok(PendingInstallRecovery::NoChange);
     };
 
     if !package_path.exists() {
@@ -1710,7 +1746,7 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
                 package_path.display()
             ),
         )?;
-        return Ok(());
+        return Ok(PendingInstallRecovery::NoChange);
     }
 
     state.status = UpdateStatus::ReadyToInstall;
@@ -1720,7 +1756,7 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
     cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
     persist_state(paths, state)?;
     info!(package = %package_path.display(), "recovered interrupted install state back to ready_to_install");
-    Ok(())
+    Ok(PendingInstallRecovery::NoChange)
 }
 
 fn installed_version_satisfies_candidate(installed: &str, candidate: &str) -> bool {
@@ -3419,6 +3455,51 @@ mod tests {
             Some(workspace.as_path())
         );
         assert!(workspace.join("builder/install.sh").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn daemon_startup_notifies_after_package_restart_completes_install() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let installed_version = "2026.07.28.202615";
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_CONFIG_HOME",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "CODEX_UPDATE_MANAGER_TEST_INSTALLED_VERSION",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+        std::env::set_var(
+            "CODEX_UPDATE_MANAGER_TEST_INSTALLED_VERSION",
+            installed_version,
+        );
+
+        let mut persisted_state = PersistedState::new(true);
+        persisted_state.status = UpdateStatus::Installing;
+        persisted_state.installed_version = "2026.07.27.221707".to_string();
+        persisted_state.candidate_version = Some(installed_version.to_string());
+        persisted_state.save(&paths.state_file)?;
+
+        let mut stale_state = PersistedState::new(true);
+        run_daemon_startup_maintenance(&config, &mut stale_state, &paths)?;
+
+        assert_eq!(stale_state.status, UpdateStatus::Installed);
+        assert_eq!(stale_state.candidate_version, None);
+        assert!(stale_state
+            .notified_events
+            .contains(&format!("installed:{installed_version}")));
         Ok(())
     }
 

@@ -760,6 +760,23 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
   const marker = `codexLinuxDisableRequestUserInputAutoResolution`;
   const functionPattern = /function [A-Za-z_$][\w$]*\([^)]*\)\{/gu;
 
+  function findGlobalStateHookAlias() {
+    const atomMatch = currentSource.match(
+      /`get-global-state`,[\s\S]{0,512}?\}\)\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(/u,
+    );
+    const atomVar = atomMatch?.[1];
+    if (atomVar == null) {
+      return null;
+    }
+    const hookMatch = currentSource.match(
+      new RegExp(
+        `function ([A-Za-z_$][\\w$]*)\\(([A-Za-z_$][\\w$]*)\\)\\{return [A-Za-z_$][\\w$]*\\(${escapeRegExp(atomVar)},\\2\\)\\}`,
+        "u",
+      ),
+    );
+    return hookMatch?.[1] ?? null;
+  }
+
   function findReactNamespaceAlias(functionEnd) {
     const moduleInitStart = currentSource.indexOf("=e((()=>{", functionEnd);
     if (moduleInitStart === -1) {
@@ -783,6 +800,7 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
   let patchedSource = currentSource;
   let changed = false;
   let match;
+  const globalStateHook = findGlobalStateHookAlias();
 
   while ((match = functionPattern.exec(currentSource)) != null) {
     const openBrace = currentSource.indexOf("{", match.index);
@@ -810,12 +828,28 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
       continue;
     }
     const [, , stateVar, , requestInputVar] = stateMatch;
+    const requestContext = functionSource
+      .slice(0, stateMatch.index)
+      .match(
+        /\{([^{}]*\bconversationId:[^{}]*\bhostId:[^{}]*)\}=[A-Za-z_$][\w$]*/u,
+      )?.[1];
+    const conversationIdVar = requestContext?.match(
+      /\bconversationId:([A-Za-z_$][\w$]*)/u,
+    )?.[1];
+    const hostIdVar = requestContext?.match(
+      /\bhostId:([A-Za-z_$][\w$]*)/u,
+    )?.[1];
     const reactVar = findReactNamespaceAlias(closeBrace + 1);
-    if (reactVar == null) {
+    if (
+      conversationIdVar == null ||
+      globalStateHook == null ||
+      hostIdVar == null ||
+      reactVar == null
+    ) {
       continue;
     }
     const insertion =
-      `let ${marker}=Y(UZe,\`${settingKey}\`)===!0;(0,${reactVar}.useEffect)(()=>{if(!${marker}||${stateVar}==null||${stateVar}.resolutionState.status===\`snoozed\`)return;gp.requestUserInputAutoResolution.snooze({conversationId:n,hostId:i,requestId:${requestInputVar}.requestId})},[n,i,${requestInputVar}.requestId,${stateVar},${marker}]);`;
+      `let ${marker}=${globalStateHook}(\`${settingKey}\`)?.data===!0;(0,${reactVar}.useEffect)(()=>{if(!${marker}||${stateVar}==null||${stateVar}.resolutionState.status===\`snoozed\`)return;gp.requestUserInputAutoResolution.snooze({conversationId:${conversationIdVar},hostId:${hostIdVar},requestId:${requestInputVar}.requestId})},[${conversationIdVar},${hostIdVar},${requestInputVar}.requestId,${stateVar},${marker}]);`;
     const declarationEnd = functionSource.indexOf(";", stateMatch.index);
     if (declarationEnd === -1) {
       continue;

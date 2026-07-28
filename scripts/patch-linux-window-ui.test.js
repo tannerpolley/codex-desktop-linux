@@ -6338,24 +6338,33 @@ test("does not empty-dismiss a still-active user input request", () => {
 
 test("allows the Linux setting to disable request input auto-resolution", () => {
   const source = [
+    "var op,GZe,sp=e((()=>{op=$f(Q,`get-global-state`,e=>({params:{key:e}})),GZe=Aa(Q,(e,{get:t})=>t(op,e))}));function ZD(e){return Bo(GZe,e)}",
     "function gHs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null;let v=_.resolutionState.status===`scheduled`?{deadlineMs:_.resolutionState.deadlineMs}:void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return v}var DHs,OHs,MHs=e((()=>{DHs=c(),OHs=r(o(),1)}));",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
   assert.match(patched, /codexLinuxDisableRequestUserInputAutoResolution/);
+  assert.match(
+    patched,
+    /ZD\(`codex-linux-disable-request-user-input-auto-resolution`\)\?\.data===!0/,
+  );
+  assert.doesNotMatch(patched, /Y\(UZe,/);
   assert.match(patched, /\(0,OHs\.useEffect\)/);
   assert.doesNotMatch(patched, /\(0,nHs\.useEffect\)/);
   assert.match(patched, /requestUserInputAutoResolution\.snooze/);
 
   const snoozed = [];
+  let settingEnabled = true;
   const context = {
-    UZe: {},
-    Y: () => true,
     OHs: { useEffect: (effect) => effect() },
     e: (initialize) => {
       initialize();
       return {};
     },
+    $f: () => ({}),
+    Aa: () => ({}),
+    Bo: () => ({ data: settingEnabled }),
+    Q: {},
     c: () => ({ c: () => {} }),
     r: () => ({ useEffect: (effect) => effect() }),
     o: () => ({}),
@@ -6371,9 +6380,45 @@ test("allows the Linux setting to disable request input auto-resolution", () => 
   ]));
 
   snoozed.length = 0;
-  context.Y = () => false;
+  settingEnabled = false;
   context.requestInput({ conversationId: "conversation-1", hostId: "local", request: { requestId: "request-1" } });
   assert.deepEqual(snoozed, []);
+});
+
+test("preserves minified conversation and host variables when disabling request input auto-resolution", () => {
+  const source = [
+    "var op,GZe,sp=e((()=>{op=$f(Q,`get-global-state`,e=>({params:{key:e}})),GZe=Aa(Q,(e,{get:t})=>t(op,e))}));function ZD(e){return Bo(GZe,e)}",
+    "function Nzs(e){let{conversationId:n,hostId:r,pendingRequest:i}=e,a=Fo(FQ,{conversationId:n,hostId:r}),s=a?.requestId===i.requestId?a:null;void `reply-with-user-input-response`;void `interrupt-conversation`;return s}var Pzs,et,Izs=e((()=>{Pzs=c(),et=r(o(),1)}));",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
+  const snoozed = [];
+  const context = {
+    e: (initialize) => {
+      initialize();
+      return {};
+    },
+    $f: () => ({}),
+    Aa: () => ({}),
+    Bo: () => ({ data: true }),
+    Q: {},
+    c: () => ({ c: () => {} }),
+    r: () => ({ useEffect: (effect) => effect() }),
+    o: () => ({}),
+    gp: { requestUserInputAutoResolution: { snooze: (request) => snoozed.push(request) } },
+    Fo: () => ({ requestId: "request-1", resolutionState: { status: "scheduled" } }),
+    FQ: {},
+  };
+  vm.runInNewContext(`${patched};this.requestInput=Nzs`, context);
+  context.requestInput({
+    conversationId: "conversation-1",
+    hostId: "remote-1",
+    pendingRequest: { requestId: "request-1" },
+  });
+
+  assert.equal(JSON.stringify(snoozed), JSON.stringify([
+    { conversationId: "conversation-1", hostId: "remote-1", requestId: "request-1" },
+  ]));
 });
 
 test("disables the upstream app sunset gate after minified alias drift", () => {

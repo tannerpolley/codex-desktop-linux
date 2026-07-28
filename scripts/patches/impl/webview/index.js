@@ -827,6 +827,24 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
     if (stateMatch == null) {
       continue;
     }
+    const nestedFunctionPattern =
+      /function [A-Za-z_$][\w$]*\([^)]*\)\{/gu;
+    let nestedFunctionMatch;
+    let stateMatchIsNested = false;
+    while ((nestedFunctionMatch = nestedFunctionPattern.exec(functionSource)) != null) {
+      if (nestedFunctionMatch.index === 0 || nestedFunctionMatch.index >= stateMatch.index) {
+        continue;
+      }
+      const nestedOpenBrace = functionSource.indexOf("{", nestedFunctionMatch.index);
+      const nestedCloseBrace = findMatchingBrace(functionSource, nestedOpenBrace);
+      if (nestedCloseBrace >= stateMatch.index) {
+        stateMatchIsNested = true;
+        break;
+      }
+    }
+    if (stateMatchIsNested) {
+      continue;
+    }
     const [, , stateVar, , requestInputVar] = stateMatch;
     const requestContext = functionSource
       .slice(0, stateMatch.index)

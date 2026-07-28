@@ -6421,6 +6421,49 @@ test("preserves minified conversation and host variables when disabling request 
   ]));
 });
 
+test("scopes request input aliases to the matching nested component", () => {
+  const source = [
+    "var op,GZe,sp=e((()=>{op=$f(Q,`get-global-state`,e=>({params:{key:e}})),GZe=Aa(Q,(e,{get:t})=>t(op,e))}));function MD(e){return Bo(GZe,e)}",
+    "function bLs(e,t){function fIs(e){let{autoResolution:n,conversationId:r,elicitation:i,hostId:a,requestId:o,onUserInteraction:s}=e;return null}function czs(e){let{conversationId:n,hostId:r,pendingRequest:i}=e,a={conversationId:n,hostId:r},o=Fo(FQ,a),s=o?.requestId===i.requestId?o:null;return s}function GVs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null;void `reply-with-user-input-response`;void `interrupt-conversation`;return _}globalThis.elicitationInput=czs,globalThis.requestInput=GVs}var Pzs,et,Izs=e((()=>{Pzs=c(),et=r(o(),1)}));bLs();",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
+  const snoozed = [];
+  const context = {
+    e: (initialize) => {
+      initialize();
+      return {};
+    },
+    $f: () => ({}),
+    Aa: () => ({}),
+    Bo: () => ({ data: true }),
+    Q: {},
+    c: () => ({ c: () => {} }),
+    r: () => ({ useEffect: (effect) => effect() }),
+    o: () => ({}),
+    gp: { requestUserInputAutoResolution: { snooze: (request) => snoozed.push(request) } },
+    Fo: () => ({ requestId: "request-1", resolutionState: { status: "scheduled" } }),
+    FQ: {},
+  };
+  vm.runInNewContext(patched, context);
+  context.elicitationInput({
+    conversationId: "conversation-1",
+    hostId: "remote-1",
+    pendingRequest: { requestId: "request-1" },
+  });
+  assert.deepEqual(snoozed, []);
+
+  context.requestInput({
+    conversationId: "conversation-1",
+    hostId: "remote-1",
+    request: { requestId: "request-1" },
+  });
+
+  assert.equal(JSON.stringify(snoozed), JSON.stringify([
+    { conversationId: "conversation-1", hostId: "remote-1", requestId: "request-1" },
+  ]));
+});
+
 test("disables the upstream app sunset gate after minified alias drift", () => {
   const patched = applyPatchTwice(applyLinuxAppSunsetPatch, appSunsetBundleWithDriftingAliasFixture());
 

@@ -876,10 +876,65 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
       functionSource.slice(0, declarationEnd + 1) +
       insertion +
       functionSource.slice(declarationEnd + 1);
+    patchedFunction = patchedFunction
+      .replace(
+        new RegExp(
+          `${escapeRegExp(stateVar)}(?:\\?\\.|\\.)resolutionState\\.status===\`scheduled\`\\?`,
+          "gu",
+        ),
+        `!${marker}&&$&`,
+      )
+      .replace(
+        new RegExp(
+          `${escapeRegExp(stateVar)}!=null&&${escapeRegExp(stateVar)}\\.resolutionState\\.status!==\`snoozed\`\\?`,
+          "gu",
+        ),
+        `!${marker}&&$&`,
+      );
     if (patchedFunction !== functionSource) {
       patchedSource = patchedSource.replace(functionSource, patchedFunction);
       changed = true;
     }
+  }
+
+  const snoozeAction = "requestUserInputAutoResolution.snooze";
+  let snoozeActionIndex = 0;
+  while (
+    globalStateHook != null &&
+    (snoozeActionIndex = currentSource.indexOf(snoozeAction, snoozeActionIndex)) !== -1
+  ) {
+    const functionStart = currentSource.lastIndexOf("function ", snoozeActionIndex);
+    const openBrace =
+      functionStart === -1 ? -1 : currentSource.indexOf("{", functionStart);
+    const functionPrefix =
+      openBrace === -1 ? "" : currentSource.slice(functionStart, snoozeActionIndex);
+    snoozeActionIndex += snoozeAction.length;
+    if (
+      functionPrefix.includes(marker) ||
+      !functionPrefix.includes("snoozeInputTimeout")
+    ) {
+      continue;
+    }
+
+    const scheduledStatePattern =
+      /([A-Za-z_$][\w$]*)\?\.resolutionState\.status===`scheduled`\?/gu;
+    const functionBodyPrefix = currentSource.slice(openBrace + 1, snoozeActionIndex);
+    if (!scheduledStatePattern.test(functionBodyPrefix)) {
+      continue;
+    }
+    scheduledStatePattern.lastIndex = 0;
+    const patchedFunctionBodyPrefix =
+      `let ${marker}=${globalStateHook}(\`${settingKey}\`)?.data===!0;` +
+      functionBodyPrefix.replace(
+        scheduledStatePattern,
+        `!${marker}&&$1?.resolutionState.status===\`scheduled\`?`,
+      );
+    patchedSource = patchedSource.replace(
+      functionBodyPrefix,
+      patchedFunctionBodyPrefix,
+    );
+    changed = true;
+    break;
   }
 
   if (!changed && currentSource.includes("reply-with-user-input-response") && !currentSource.includes(marker)) {

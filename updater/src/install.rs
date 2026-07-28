@@ -180,6 +180,22 @@ pub fn is_primary_package_installed() -> bool {
     installed_package_version() != "unknown"
 }
 
+pub(crate) fn package_version(path: &Path) -> Result<String> {
+    match PackageKind::from_path(path) {
+        PackageKind::Deb => deb_package_version(path),
+        PackageKind::Rpm => rpm_package_version(path),
+        PackageKind::Pacman => pacman_package_version(path),
+    }
+}
+
+pub(crate) fn ensure_upgrade_package(path: &Path) -> Result<()> {
+    match PackageKind::from_path(path) {
+        PackageKind::Deb => ensure_upgrade_path(path),
+        PackageKind::Rpm => ensure_upgrade_path_rpm(path),
+        PackageKind::Pacman => ensure_upgrade_path_pacman(path),
+    }
+}
+
 fn installed_deb_version() -> String {
     installed_version_from_command(
         &program_path(DPKG_QUERY_CANDIDATES, "dpkg-query"),

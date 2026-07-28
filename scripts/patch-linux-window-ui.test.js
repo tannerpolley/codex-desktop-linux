@@ -6339,7 +6339,7 @@ test("does not empty-dismiss a still-active user input request", () => {
 test("allows the Linux setting to disable request input auto-resolution", () => {
   const source = [
     "var op,GZe,sp=e((()=>{op=$f(Q,`get-global-state`,e=>({params:{key:e}})),GZe=Aa(Q,(e,{get:t})=>t(op,e))}));function ZD(e){return Bo(GZe,e)}",
-    "function gHs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null;let v=_.resolutionState.status===`scheduled`?{deadlineMs:_.resolutionState.deadlineMs}:void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return v}var DHs,OHs,MHs=e((()=>{DHs=c(),OHs=r(o(),1)}));",
+    "function gHs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null;let v=_?.resolutionState.status===`scheduled`?{deadlineMs:_.resolutionState.deadlineMs}:void 0,k=_!=null&&_.resolutionState.status!==`snoozed`?()=>gp.requestUserInputAutoResolution.snooze({conversationId:n,hostId:i,requestId:a.requestId}):void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return {autoResolution:v,onUserInteraction:k}}var DHs,OHs,MHs=e((()=>{DHs=c(),OHs=r(o(),1)}));",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
@@ -6352,6 +6352,14 @@ test("allows the Linux setting to disable request input auto-resolution", () => 
   assert.match(patched, /\(0,OHs\.useEffect\)/);
   assert.doesNotMatch(patched, /\(0,nHs\.useEffect\)/);
   assert.match(patched, /requestUserInputAutoResolution\.snooze/);
+  assert.match(
+    patched,
+    /!codexLinuxDisableRequestUserInputAutoResolution&&_\?\.resolutionState\.status===`scheduled`/,
+  );
+  assert.match(
+    patched,
+    /!codexLinuxDisableRequestUserInputAutoResolution&&_!=null&&_\.resolutionState\.status!==`snoozed`/,
+  );
 
   const snoozed = [];
   let settingEnabled = true;
@@ -6369,20 +6377,80 @@ test("allows the Linux setting to disable request input auto-resolution", () => 
     r: () => ({ useEffect: (effect) => effect() }),
     o: () => ({}),
     gp: { requestUserInputAutoResolution: { snooze: (request) => snoozed.push(request) } },
-    Fo: () => ({ requestId: "request-1", resolutionState: { status: "scheduled" } }),
+    Fo: () => ({
+      requestId: "request-1",
+      resolutionState: { deadlineMs: 1234, status: "scheduled" },
+    }),
     FQ: {},
   };
   vm.runInNewContext(`${patched};this.requestInput=gHs`, context);
-  context.requestInput({ conversationId: "conversation-1", hostId: "local", request: { requestId: "request-1" } });
+  const disabledUi = context.requestInput({
+    conversationId: "conversation-1",
+    hostId: "local",
+    request: { requestId: "request-1" },
+  });
 
   assert.equal(JSON.stringify(snoozed), JSON.stringify([
     { conversationId: "conversation-1", hostId: "local", requestId: "request-1" },
   ]));
+  assert.equal(disabledUi.autoResolution, undefined);
+  assert.equal(disabledUi.onUserInteraction, undefined);
 
   snoozed.length = 0;
   settingEnabled = false;
-  context.requestInput({ conversationId: "conversation-1", hostId: "local", request: { requestId: "request-1" } });
+  const enabledUi = context.requestInput({
+    conversationId: "conversation-1",
+    hostId: "local",
+    request: { requestId: "request-1" },
+  });
   assert.deepEqual(snoozed, []);
+  assert.equal(enabledUi.autoResolution.deadlineMs, 1234);
+  assert.equal(typeof enabledUi.onUserInteraction, "function");
+});
+
+test("hides the task row snooze action when request input auto-resolution is disabled", () => {
+  const source = [
+    "var op,GZe,sp=e((()=>{op=$f(Q,`get-global-state`,e=>({params:{key:e}})),GZe=Aa(Q,(e,{get:t})=>t(op,e))}));function ZD(e){return Bo(GZe,e)}",
+    "function taskRow(e){let wt=e.pending,Tt=wt?.resolutionState.status===`scheduled`?wt.resolutionState:null,Et=wt?.resolutionState.status===`scheduled`?wt.requestId:null,Dt={ariaLabel:Tt==null?void 0:dBl.snoozeInputTimeout,onClick:Et==null?void 0:()=>{gp.requestUserInputAutoResolution.snooze({requestId:Et})},progress:Tt==null?void 0:{deadlineMs:Tt.deadlineMs}};return Dt}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
+
+  assert.match(patched, /codexLinuxDisableRequestUserInputAutoResolution/);
+  assert.match(
+    patched,
+    /!codexLinuxDisableRequestUserInputAutoResolution&&wt\?\.resolutionState\.status===`scheduled`/,
+  );
+
+  let settingEnabled = true;
+  const context = {
+    e: (initialize) => {
+      initialize();
+      return {};
+    },
+    $f: () => ({}),
+    Aa: () => ({}),
+    Bo: () => ({ data: settingEnabled }),
+    Q: {},
+    dBl: { snoozeInputTimeout: "Snooze" },
+    gp: { requestUserInputAutoResolution: { snooze: () => {} } },
+  };
+  vm.runInNewContext(`${patched};this.taskRow=taskRow`, context);
+  const pending = {
+    requestId: "request-1",
+    resolutionState: { deadlineMs: 1234, status: "scheduled" },
+  };
+
+  const disabledUi = context.taskRow({ pending });
+  assert.equal(disabledUi.ariaLabel, undefined);
+  assert.equal(disabledUi.onClick, undefined);
+  assert.equal(disabledUi.progress, undefined);
+
+  settingEnabled = false;
+  const enabledUi = context.taskRow({ pending });
+  assert.equal(enabledUi.ariaLabel, "Snooze");
+  assert.equal(typeof enabledUi.onClick, "function");
+  assert.equal(enabledUi.progress.deadlineMs, 1234);
 });
 
 test("preserves minified conversation and host variables when disabling request input auto-resolution", () => {

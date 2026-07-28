@@ -115,6 +115,9 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Status { json } => run_status(&config, &mut state, &paths, json),
         Commands::Diagnose { .. } => unreachable!("diagnose is handled before runtime writes"),
         Commands::InstallReady => run_install_ready(&config, &mut state, &paths).await,
+        Commands::QueuePackage { path } => {
+            run_queue_package(&config, &mut state, &paths, &path).await
+        }
         Commands::Rollback => rollback::run(&config, &mut state, &paths).await,
         Commands::InstallDeb { path } => install::install_deb(&path),
         Commands::InstallRpm { path } => install::install_rpm(&path),
@@ -150,6 +153,103 @@ fn persist_if_changed(
     }
 
     Ok(())
+}
+
+async fn run_queue_package(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    package_path: &Path,
+) -> Result<()> {
+    let Some(_check_lock) = acquire_check_lock(paths, CheckLockBehavior::Wait).await? else {
+        anyhow::bail!("Could not acquire updater state lock");
+    };
+    reload_state_from_disk(config, state, paths)?;
+    anyhow::ensure!(
+        !matches!(
+            state.status,
+            UpdateStatus::ReadyToInstall
+                | UpdateStatus::WaitingForAppExit
+                | UpdateStatus::Installing
+        ),
+        "Another update package is already pending"
+    );
+
+    let stable = install::stable_validated_package(package_path)?;
+    install::ensure_upgrade_package(stable.path())?;
+    let candidate_version = install::package_version(stable.path())?;
+    let (workspace_dir, queued_package_path) = stage_queued_package(config, stable.path())?;
+
+    record_queued_package(
+        state,
+        &candidate_version,
+        &workspace_dir,
+        &queued_package_path,
+    );
+    persist_state(paths, state)?;
+    reconcile_pending_install(config, state, paths).await?;
+    println!("Queued ChatGPT Desktop {candidate_version} for installation after the app exits.");
+    Ok(())
+}
+
+fn stage_queued_package(config: &RuntimeConfig, package_path: &Path) -> Result<(PathBuf, PathBuf)> {
+    let nonce = format!("{}-{}", std::process::id(), Utc::now().timestamp_micros());
+    let workspaces_dir = config.workspace_root.join("workspaces");
+    let temp_workspace = workspaces_dir.join(format!(".queued-{nonce}.tmp"));
+    let workspace_dir = workspaces_dir.join(format!("queued-{nonce}"));
+    let temp_dist = temp_workspace.join("dist");
+    fs::create_dir_all(&temp_dist)
+        .with_context(|| format!("Failed to create {}", temp_dist.display()))?;
+    fs::set_permissions(&temp_workspace, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("Failed to secure {}", temp_workspace.display()))?;
+    fs::set_permissions(&temp_dist, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("Failed to secure {}", temp_dist.display()))?;
+
+    let file_name = package_path
+        .file_name()
+        .context("Queued package path has no file name")?;
+    let temp_package_path = temp_dist.join(file_name);
+    let stage_result = (|| -> Result<()> {
+        fs::copy(package_path, &temp_package_path).with_context(|| {
+            format!("Failed to stage queued package {}", package_path.display())
+        })?;
+        fs::set_permissions(&temp_package_path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("Failed to secure {}", temp_package_path.display()))?;
+        install::ensure_codex_package(&temp_package_path)?;
+        fs::rename(&temp_workspace, &workspace_dir).with_context(|| {
+            format!(
+                "Failed to promote queued package workspace {}",
+                workspace_dir.display()
+            )
+        })?;
+        Ok(())
+    })();
+    if let Err(error) = stage_result {
+        let _ = fs::remove_dir_all(&temp_workspace);
+        return Err(error);
+    }
+
+    Ok((
+        workspace_dir.clone(),
+        workspace_dir.join("dist").join(file_name),
+    ))
+}
+
+fn record_queued_package(
+    state: &mut PersistedState,
+    candidate_version: &str,
+    workspace_dir: &Path,
+    package_path: &Path,
+) {
+    state.candidate_version = Some(candidate_version.to_string());
+    state.status = UpdateStatus::ReadyToInstall;
+    state.dmg_sha256 = None;
+    state.artifact_paths.dmg_path = None;
+    state.artifact_paths.workspace_dir = Some(workspace_dir.to_path_buf());
+    state.artifact_paths.package_path = Some(package_path.to_path_buf());
+    state.waiting_for_app_exit_auto_install = false;
+    state.error_message = None;
+    state.notified_events.clear();
 }
 
 fn effective_auto_install(config: &RuntimeConfig) -> bool {
@@ -2264,6 +2364,37 @@ mod tests {
             ),
         )?;
         Ok(())
+    }
+
+    #[test]
+    fn records_a_queued_local_package_as_ready_for_exit_install() {
+        let mut state = PersistedState::new(true);
+        state.notified_events.insert("old-candidate".to_string());
+        state.dmg_sha256 = Some("already-installed-dmg".to_string());
+        state.artifact_paths.dmg_path = Some(PathBuf::from("/tmp/Codex.dmg"));
+        let workspace = PathBuf::from("/tmp/updater-workspace");
+        let package = workspace.join("dist/codex-desktop.deb");
+
+        record_queued_package(&mut state, "2026.07.28.210146", &workspace, &package);
+
+        assert_eq!(state.status, UpdateStatus::ReadyToInstall);
+        assert_eq!(
+            state.candidate_version.as_deref(),
+            Some("2026.07.28.210146")
+        );
+        assert_eq!(
+            state.artifact_paths.workspace_dir.as_deref(),
+            Some(workspace.as_path())
+        );
+        assert_eq!(
+            state.artifact_paths.package_path.as_deref(),
+            Some(package.as_path())
+        );
+        assert!(!state.waiting_for_app_exit_auto_install);
+        assert!(state.error_message.is_none());
+        assert!(state.notified_events.is_empty());
+        assert!(state.dmg_sha256.is_none());
+        assert!(state.artifact_paths.dmg_path.is_none());
     }
 
     #[test]

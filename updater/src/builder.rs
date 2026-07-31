@@ -122,13 +122,14 @@ pub async fn build_update_from(
 
     state.status = UpdateStatus::PreparingWorkspace;
     state.artifact_paths.workspace_dir = Some(workspace.workspace_dir.clone());
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
 
     copy_builder_bundle(bundle_source, &workspace.bundle_dir)?;
     stage_git_source_info(bundle_source, &workspace.bundle_dir)?;
 
     state.status = UpdateStatus::PatchingApp;
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
+    let feature_config = crate::config::effective_feature_config_path(config);
     let mut install = Command::new(workspace.bundle_dir.join("install.sh"));
     install
         .arg(dmg_path)
@@ -149,35 +150,37 @@ pub async fn build_update_from(
     // writes it to a stable per-user path) so the rebuild stages exactly those
     // features. Only set it when the file actually exists; an absent path would
     // make linux-features.js see an empty enabled set and stage nothing.
-    if let Some(feature_config) = crate::config::effective_feature_config_path(config) {
-        install.env("CODEX_LINUX_FEATURES_CONFIG", &feature_config);
+    if let Some(feature_config) = &feature_config {
+        install.env("CODEX_LINUX_FEATURES_CONFIG", feature_config);
     }
     run_and_log(&mut install, &workspace.install_log)
         .await
         .context("install.sh failed during local rebuild")?;
 
     state.status = UpdateStatus::BuildingPackage;
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
 
     let build_script = package_build_script(&workspace.bundle_dir);
-    run_and_log(
-        Command::new(&build_script)
-            .env("PACKAGE_VERSION", candidate_version)
-            .env("APP_DIR_OVERRIDE", &workspace.app_dir)
-            .env("DIST_DIR_OVERRIDE", &workspace.dist_dir)
-            .env("UPDATER_BINARY_SOURCE", std::env::current_exe()?)
-            .env(
-                "UPDATER_SERVICE_SOURCE",
-                workspace
-                    .bundle_dir
-                    .join("packaging/linux/codex-update-manager.service"),
-            )
-            .env("PATH", &build_path)
-            .current_dir(&workspace.bundle_dir),
-        &workspace.build_log,
-    )
-    .await
-    .with_context(|| format!("{} failed during local rebuild", build_script.display()))?;
+    let mut package_build = Command::new(&build_script);
+    package_build
+        .env("PACKAGE_VERSION", candidate_version)
+        .env("APP_DIR_OVERRIDE", &workspace.app_dir)
+        .env("DIST_DIR_OVERRIDE", &workspace.dist_dir)
+        .env("UPDATER_BINARY_SOURCE", std::env::current_exe()?)
+        .env(
+            "UPDATER_SERVICE_SOURCE",
+            workspace
+                .bundle_dir
+                .join("packaging/linux/codex-update-manager.service"),
+        )
+        .env("PATH", &build_path)
+        .current_dir(&workspace.bundle_dir);
+    if let Some(feature_config) = &feature_config {
+        package_build.env("CODEX_LINUX_FEATURES_CONFIG", feature_config);
+    }
+    run_and_log(&mut package_build, &workspace.build_log)
+        .await
+        .with_context(|| format!("{} failed during local rebuild", build_script.display()))?;
 
     let package_path = find_package_in(&workspace.dist_dir)?;
     state.status = UpdateStatus::ReadyToInstall;
@@ -187,7 +190,7 @@ pub async fn build_update_from(
         package_path: Some(package_path.clone()),
         rollback_package_path: state.artifact_paths.rollback_package_path.clone(),
     };
-    state.save(&paths.state_file)?;
+    state.save_updater(&paths.state_file)?;
     info!(candidate_version, package = %package_path.display(), "local update build ready");
 
     Ok(BuildArtifacts {
@@ -697,8 +700,10 @@ mod tests {
     const FRESH_PATCH_BUNDLE_FILES: &[&str] = &[
         "scripts/patches/descriptor.js",
         "scripts/patches/engine.js",
+        "scripts/patches/integrity-error.js",
         "scripts/patches/runner.js",
         "scripts/patches/lib/assets.js",
+        "scripts/patches/lib/composition-delegation.js",
         "scripts/patches/lib/minified-js.js",
         "scripts/patches/lib/settings-keys.js",
         "scripts/patches/impl/webview/index.js",
@@ -779,6 +784,7 @@ esac
                 r#"set -euo pipefail
 mkdir -p "${DIST_DIR_OVERRIDE}"
 cp .codex-linux/source-info.json "${DIST_DIR_OVERRIDE}/package-source-info.json"
+printf '%s\n' "${CODEX_LINUX_FEATURES_CONFIG:-}" > "${DIST_DIR_OVERRIDE}/package-feature-config-path"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
 "#
             }
@@ -786,6 +792,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop_${PACKAGE_VERSION}_amd64.deb"
                 r#"set -euo pipefail
 mkdir -p "${DIST_DIR_OVERRIDE}"
 cp .codex-linux/source-info.json "${DIST_DIR_OVERRIDE}/package-source-info.json"
+printf '%s\n' "${CODEX_LINUX_FEATURES_CONFIG:-}" > "${DIST_DIR_OVERRIDE}/package-feature-config-path"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
 "#
             }
@@ -794,6 +801,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${PACKAGE_VERSION}.x86_64.rpm"
 VER="${PACKAGE_VERSION%%+*}"
 mkdir -p "${DIST_DIR_OVERRIDE}"
 cp .codex-linux/source-info.json "${DIST_DIR_OVERRIDE}/package-source-info.json"
+printf '%s\n' "${CODEX_LINUX_FEATURES_CONFIG:-}" > "${DIST_DIR_OVERRIDE}/package-feature-config-path"
 touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
 "#
             }
@@ -927,6 +935,7 @@ touch "${DIST_DIR_OVERRIDE}/codex-desktop-${VER}-1-x86_64.pkg.tar.zst"
             "FAKE_GIT_COMMIT",
             "FAKE_GIT_DESCRIBE",
             "FAKE_GIT_STATUS",
+            "CODEX_LINUX_SETTINGS_FILE",
         ]);
         let runtime = tokio::runtime::Runtime::new()?;
         let temp = tempdir()?;
@@ -1007,6 +1016,7 @@ mkdir -p "${CODEX_INSTALL_DIR}"
 echo launcher > "${CODEX_INSTALL_DIR}/start.sh"
 chmod +x "${CODEX_INSTALL_DIR}/start.sh"
 cp .codex-linux/source-info.json "${CODEX_INSTALL_DIR}/app-source-info.json"
+printf '%s\n' "${CODEX_LINUX_FEATURES_CONFIG:-}" > "${CODEX_INSTALL_DIR}/install-feature-config-path"
 if [ -n "${CODEX_PATCH_REPORT_JSON:-}" ]; then
   mkdir -p "$(dirname "$CODEX_PATCH_REPORT_JSON")"
   printf '{"patches":[]}\n' > "${CODEX_PATCH_REPORT_JSON}"
@@ -1089,6 +1099,11 @@ fi
         };
         let dmg_path = temp.path().join("Codex.dmg");
         fs::write(&dmg_path, b"dmg")?;
+        let settings_file = temp.path().join("settings/settings.json");
+        let saved_feature_config = temp.path().join("settings/linux-features.json");
+        fs::create_dir_all(settings_file.parent().unwrap())?;
+        fs::write(&saved_feature_config, r#"{"enabled":["example-feature"]}"#)?;
+        std::env::set_var("CODEX_LINUX_SETTINGS_FILE", &settings_file);
 
         let mut state = PersistedState::new(true);
         let artifacts = runtime.block_on(build_update(
@@ -1134,6 +1149,15 @@ fi
             assert_eq!(source_info["describe"], expected_describe);
             assert_eq!(source_info["dirty"], false);
             assert_eq!(source_info["provenance"], "git");
+        }
+        for relative_path in [
+            "codex-app/install-feature-config-path",
+            "dist/package-feature-config-path",
+        ] {
+            assert_eq!(
+                fs::read_to_string(artifacts.workspace_dir.join(relative_path))?,
+                format!("{}\n", saved_feature_config.display())
+            );
         }
         assert!(artifacts
             .workspace_dir
@@ -1286,6 +1310,7 @@ fi
 
     #[test]
     fn fake_package_builders_emit_source_info() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
         let temp = tempdir()?;
         for (index, output) in [
             FakePackageOutput::Deb,

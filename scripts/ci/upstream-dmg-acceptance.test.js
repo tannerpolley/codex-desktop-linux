@@ -72,6 +72,24 @@ test("rejects required patch and post-patch integrity failures", () => withFixtu
   assert.ok(decision.blockers.some((item) => item.code === "post-patch-integrity"));
 }));
 
+test("rejects a fatal descriptor integrity failure regardless of optional policy", () => withFixture(({ root, dmg }) => {
+  const core = requiredCoreReport();
+  core.patches.push(patch("optional-transaction", {
+    status: "failed-integrity",
+    ciPolicy: "optional",
+    reason: "rollback could not restore original bytes",
+  }));
+  const decision = evaluate(root, dmg, { core });
+  assert.equal(decision.verdict, "rejected");
+  assert.ok(
+    decision.blockers.some(
+      (item) =>
+        item.name === "optional-transaction" &&
+        item.reason.includes("failed-integrity"),
+    ),
+  );
+}));
+
 test("rejects drift from a user-enabled feature", () => withFixture(({ root, dmg }) => {
   const core = requiredCoreReport();
   core.enabledFeatures = ["ui-tweaks"];
@@ -149,6 +167,31 @@ test("a structured rejection wins over incomplete checks", () => withFixture(({ 
   assert.equal(decision.verdict, "rejected");
 }));
 
+test("preserves packaged builder source metadata when a build fails before build info", () => withFixture(({ root, dmg }) => {
+  const commit = "a".repeat(40);
+  writeJson(root, ".codex-linux/source-info.json", {
+    commit,
+    shortCommit: commit.slice(0, 12),
+    version: "0.10.1",
+    branch: "main",
+    remote: "https://github.com/ilysenko/codex-desktop-linux.git",
+    provenance: "packaged-update-builder",
+  });
+  const core = requiredCoreReport();
+  core.patches[0].status = "failed-required";
+  core.patches[0].reason = "current upstream contract did not match";
+
+  const decision = evaluate(root, dmg, {
+    core,
+    buildStatus: "failure",
+  });
+
+  assert.equal(decision.verdict, "rejected");
+  assert.equal(decision.source?.commit, commit);
+  assert.equal(decision.source?.version, "0.10.1");
+  assert.equal(decision.source?.provenance, "packaged-update-builder");
+}));
+
 test("HTTP identity requires an ETag or Last-Modified plus Content-Length", () => {
   assert.equal(httpIdentity({ contentLength: 42 }), null);
   assert.equal(httpIdentity({ lastModified: "today" }), null);
@@ -217,6 +260,7 @@ test("Nix hash refresh accepts a validated focused output override", () => {
 
   assert.deepEqual(watchdogProfile.enabled, [
     "appshots",
+    "codex-micro",
     "codex-wrapper-updater",
     "directory-only-working-tree-watch",
     "frameless-titlebar",

@@ -778,21 +778,22 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
   }
 
   function findReactNamespaceAlias(functionEnd) {
-    const moduleInitStart = currentSource.indexOf("=e((()=>{", functionEnd);
-    if (moduleInitStart === -1) {
+    const moduleInitPattern =
+      /=[A-Za-z_$][\w$]*\(\(\(\)=>\{/gu;
+    moduleInitPattern.lastIndex = functionEnd;
+    const moduleInitMatch = moduleInitPattern.exec(currentSource);
+    if (moduleInitMatch == null) {
       return null;
     }
-    const nextModuleInitStart = currentSource.indexOf(
-      "=e((()=>{",
-      moduleInitStart + 1,
-    );
+    const moduleInitStart = moduleInitMatch.index;
+    const nextModuleInitMatch = moduleInitPattern.exec(currentSource);
     const moduleSource = currentSource.slice(
       moduleInitStart,
-      nextModuleInitStart === -1 ? moduleInitStart + 4096 : nextModuleInitStart,
+      nextModuleInitMatch == null ? moduleInitStart + 4096 : nextModuleInitMatch.index,
     );
     return (
-      moduleSource.match(/\b([A-Za-z_$][\w$]*)=r\(o\(\),1\)/u)?.[1] ??
-      currentSource.match(/\b([A-Za-z_$][\w$]*)=r\(o\(\),1\)/u)?.[1] ??
+      moduleSource.match(/\b([A-Za-z_$][\w$]*)=r\([A-Za-z_$][\w$]*\(\),1\)/u)?.[1] ??
+      currentSource.match(/\b([A-Za-z_$][\w$]*)=r\([A-Za-z_$][\w$]*\(\),1\)/u)?.[1] ??
       null
     );
   }
@@ -845,7 +846,7 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
     if (stateMatchIsNested) {
       continue;
     }
-    const [, , stateVar, , requestInputVar] = stateMatch;
+    const [, , stateVar, , requestInputVar, stateDelimiter] = stateMatch;
     const requestContext = functionSource
       .slice(0, stateMatch.index)
       .match(
@@ -867,15 +868,23 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
       continue;
     }
     const insertion =
-      `let ${marker}=${globalStateHook}(\`${settingKey}\`)?.data===!0;(0,${reactVar}.useEffect)(()=>{if(!${marker}||${stateVar}==null||${stateVar}.resolutionState.status===\`snoozed\`)return;gp.requestUserInputAutoResolution.snooze({conversationId:${conversationIdVar},hostId:${hostIdVar},requestId:${requestInputVar}.requestId})},[${conversationIdVar},${hostIdVar},${requestInputVar}.requestId,${stateVar},${marker}]);`;
-    const declarationEnd = functionSource.indexOf(";", stateMatch.index);
-    if (declarationEnd === -1) {
-      continue;
+      `let ${marker}=${globalStateHook}(\`${settingKey}\`)?.data!==!1;(0,${reactVar}.useEffect)(()=>{if(!${marker}||${stateVar}==null||${stateVar}.resolutionState.status===\`snoozed\`)return;gp.requestUserInputAutoResolution.snooze({conversationId:${conversationIdVar},hostId:${hostIdVar},requestId:${requestInputVar}.requestId})},[${conversationIdVar},${hostIdVar},${requestInputVar}.requestId,${stateVar},${marker}]);`;
+    if (stateDelimiter === ",") {
+      const stateValueEnd = stateMatch.index + stateMatch[0].length - 1;
+      patchedFunction =
+        functionSource.slice(0, stateValueEnd) +
+        `;${insertion}let ` +
+        functionSource.slice(stateValueEnd + 1);
+    } else {
+      const declarationEnd = functionSource.indexOf(";", stateMatch.index);
+      if (declarationEnd === -1) {
+        continue;
+      }
+      patchedFunction =
+        functionSource.slice(0, declarationEnd + 1) +
+        insertion +
+        functionSource.slice(declarationEnd + 1);
     }
-    patchedFunction =
-      functionSource.slice(0, declarationEnd + 1) +
-      insertion +
-      functionSource.slice(declarationEnd + 1);
     patchedFunction = patchedFunction
       .replace(
         new RegExp(
@@ -924,7 +933,7 @@ function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
     }
     scheduledStatePattern.lastIndex = 0;
     const patchedFunctionBodyPrefix =
-      `let ${marker}=${globalStateHook}(\`${settingKey}\`)?.data===!0;` +
+      `let ${marker}=${globalStateHook}(\`${settingKey}\`)?.data!==!1;` +
       functionBodyPrefix.replace(
         scheduledStatePattern,
         `!${marker}&&$1?.resolutionState.status===\`scheduled\`?`,

@@ -5678,6 +5678,10 @@ test("renders the generated Linux desktop settings page with working switches", 
     assert.ok(text.includes("Warm start"));
     assert.ok(text.includes("Keep questions open"));
     assert.ok(text.includes("Install updates when you close ChatGPT"));
+    assert.match(
+      fs.readFileSync(path.join(assetsDir, linuxDesktopSettingsAsset), "utf8"),
+      /label:"Keep questions open"[\s\S]*defaultValue:!0/,
+    );
 
     const switches = rendered.filter(
       (value) => typeof value === "object" && value.type === "button" && value.props.role === "switch",
@@ -6339,14 +6343,14 @@ test("does not empty-dismiss a still-active user input request", () => {
 test("allows the Linux setting to disable request input auto-resolution", () => {
   const source = [
     "var op,GZe,sp=e((()=>{op=$f(Q,`get-global-state`,e=>({params:{key:e}})),GZe=Aa(Q,(e,{get:t})=>t(op,e))}));function ZD(e){return Bo(GZe,e)}",
-    "function gHs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null;let v=_?.resolutionState.status===`scheduled`?{deadlineMs:_.resolutionState.deadlineMs}:void 0,k=_!=null&&_.resolutionState.status!==`snoozed`?()=>gp.requestUserInputAutoResolution.snooze({conversationId:n,hostId:i,requestId:a.requestId}):void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return {autoResolution:v,onUserInteraction:k}}var DHs,OHs,MHs=e((()=>{DHs=c(),OHs=r(o(),1)}));",
+    "function gHs(e){let{conversationId:n,hostId:i,request:a}=e,g=Fo(FQ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null,v=_?.resolutionState.status===`scheduled`?{deadlineMs:_.resolutionState.deadlineMs}:void 0,k=_!=null&&_.resolutionState.status!==`snoozed`?()=>gp.requestUserInputAutoResolution.snooze({conversationId:n,hostId:i,requestId:a.requestId}):void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return {autoResolution:v,onUserInteraction:k}}var DHs,OHs,MHs=e((()=>{DHs=c(),OHs=r(o(),1)}));",
   ].join("");
 
   const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
   assert.match(patched, /codexLinuxDisableRequestUserInputAutoResolution/);
   assert.match(
     patched,
-    /ZD\(`codex-linux-disable-request-user-input-auto-resolution`\)\?\.data===!0/,
+    /ZD\(`codex-linux-disable-request-user-input-auto-resolution`\)\?\.data!==!1/,
   );
   assert.doesNotMatch(patched, /Y\(UZe,/);
   assert.match(patched, /\(0,OHs\.useEffect\)/);
@@ -6406,6 +6410,72 @@ test("allows the Linux setting to disable request input auto-resolution", () => 
   assert.deepEqual(snoozed, []);
   assert.equal(enabledUi.autoResolution.deadlineMs, 1234);
   assert.equal(typeof enabledUi.onUserInteraction, "function");
+
+  snoozed.length = 0;
+  settingEnabled = undefined;
+  const defaultUi = context.requestInput({
+    conversationId: "conversation-1",
+    hostId: "local",
+    request: { requestId: "request-1" },
+  });
+  assert.equal(JSON.stringify(snoozed), JSON.stringify([
+    { conversationId: "conversation-1", hostId: "local", requestId: "request-1" },
+  ]));
+  assert.equal(defaultUi.autoResolution, undefined);
+  assert.equal(defaultUi.onUserInteraction, undefined);
+});
+
+test("patches the current compiled request-question component after module alias drift", () => {
+  const source = [
+    "var op,GZe,sp=e((()=>{op=$f(Q,`get-global-state`,e=>({params:{key:e}})),GZe=Aa(Q,(e,{get:t})=>t(op,e))}));function ZD(e){return Bo(GZe,e)}",
+    "function L3s(e){let{conversationId:n,hostId:i,request:a}=e,g=jo(PZ,{conversationId:n,hostId:i}),_=g?.requestId===a.requestId?g:null,v=_?.resolutionState.status===`scheduled`?_.resolutionState:null;if(a.questions.length===0)return null;let k=_!=null&&_.resolutionState.status!==`snoozed`?()=>gp.requestUserInputAutoResolution.snooze({conversationId:n,hostId:i,requestId:a.requestId}):void 0;void `reply-with-user-input-response`;void `interrupt-conversation`;return {autoResolution:v,onUserInteraction:k}}var J3s,Y3s,gQ,X3s,Z3s,Q3s,$3s=n((()=>{J3s=l(),Y3s=r(s(),1),gQ=J()}));",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxUserInputAutoResolutionOptOutPatch, source);
+  assert.match(patched, /function L3s\(e\)[\s\S]*codexLinuxDisableRequestUserInputAutoResolution/);
+  assert.match(patched, /\(0,Y3s\.useEffect\)/);
+  assert.match(
+    patched,
+    /!codexLinuxDisableRequestUserInputAutoResolution&&_\?\.resolutionState\.status===`scheduled`/,
+  );
+  assert.match(
+    patched,
+    /!codexLinuxDisableRequestUserInputAutoResolution&&_!=null&&_\.resolutionState\.status!==`snoozed`/,
+  );
+
+  const snoozed = [];
+  const context = {
+    e: (initialize) => {
+      initialize();
+      return {};
+    },
+    $f: () => ({}),
+    Aa: () => ({}),
+    Bo: () => undefined,
+    Q: {},
+    gp: { requestUserInputAutoResolution: { snooze: (request) => snoozed.push(request) } },
+    jo: () => ({ requestId: "request-1", resolutionState: { status: "scheduled" } }),
+    PZ: {},
+    l: () => ({}),
+    r: () => ({ useEffect: (effect) => effect() }),
+    s: () => ({}),
+    J: () => ({ jsx: () => {} }),
+    n: (initialize) => {
+      initialize();
+      return {};
+    },
+  };
+  vm.runInNewContext(`${patched};this.requestInput=L3s`, context);
+  const rendered = context.requestInput({
+    conversationId: "conversation-1",
+    hostId: "local",
+    request: { requestId: "request-1", questions: [] },
+  });
+
+  assert.equal(JSON.stringify(snoozed), JSON.stringify([
+    { conversationId: "conversation-1", hostId: "local", requestId: "request-1" },
+  ]));
+  assert.equal(rendered, null);
 });
 
 test("hides the task row snooze action when request input auto-resolution is disabled", () => {

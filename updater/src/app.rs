@@ -165,14 +165,10 @@ async fn run_queue_package(
         anyhow::bail!("Could not acquire updater state lock");
     };
     reload_state_from_disk(config, state, paths)?;
+    let replacing_pending = queue_package_can_replace_pending(&state.status);
     anyhow::ensure!(
-        !matches!(
-            state.status,
-            UpdateStatus::ReadyToInstall
-                | UpdateStatus::WaitingForAppExit
-                | UpdateStatus::Installing
-        ),
-        "Another update package is already pending"
+        state.status != UpdateStatus::Installing,
+        "Cannot replace an update while installation is in progress"
     );
 
     let stable = install::stable_validated_package(package_path)?;
@@ -187,9 +183,27 @@ async fn run_queue_package(
         &queued_package_path,
     );
     persist_state(paths, state)?;
+    if replacing_pending {
+        maybe_prune_workspace_cache(&config.workspace_root, state);
+    }
     reconcile_pending_install(config, state, paths).await?;
-    println!("Queued ChatGPT Desktop {candidate_version} for installation after the app exits.");
+    if replacing_pending {
+        println!(
+            "Replaced the pending ChatGPT Desktop package with {candidate_version}; it will install after the app exits."
+        );
+    } else {
+        println!(
+            "Queued ChatGPT Desktop {candidate_version} for installation after the app exits."
+        );
+    }
     Ok(())
+}
+
+fn queue_package_can_replace_pending(status: &UpdateStatus) -> bool {
+    matches!(
+        status,
+        UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit
+    )
 }
 
 fn stage_queued_package(config: &RuntimeConfig, package_path: &Path) -> Result<(PathBuf, PathBuf)> {
@@ -2395,6 +2409,22 @@ mod tests {
         assert!(state.notified_events.is_empty());
         assert!(state.dmg_sha256.is_none());
         assert!(state.artifact_paths.dmg_path.is_none());
+    }
+
+    #[test]
+    fn validated_packages_can_replace_only_pre_install_pending_states() {
+        assert!(queue_package_can_replace_pending(
+            &UpdateStatus::ReadyToInstall
+        ));
+        assert!(queue_package_can_replace_pending(
+            &UpdateStatus::WaitingForAppExit
+        ));
+        assert!(!queue_package_can_replace_pending(
+            &UpdateStatus::Installing
+        ));
+        assert!(!queue_package_can_replace_pending(
+            &UpdateStatus::BuildingPackage
+        ));
     }
 
     #[test]

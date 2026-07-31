@@ -529,7 +529,7 @@ function addLinuxRequestInputAutoResolutionSetting(source) {
     )
     .replace(
       updateToggleMarker,
-      `$.jsx(LinuxToggle,{settingKey:KEYS.disableRequestUserInputAutoResolution,label:"Keep questions open",description:"Wait for an explicit answer or interruption instead of automatically submitting an empty answer.",defaultValue:!1}),${updateToggleMarker}`,
+      `$.jsx(LinuxToggle,{settingKey:KEYS.disableRequestUserInputAutoResolution,label:"Keep questions open",description:"Wait for an explicit answer or interruption instead of automatically submitting an empty answer.",defaultValue:!0}),${updateToggleMarker}`,
     );
 }
 

@@ -15,6 +15,20 @@ It:
   command when no auth agent is available
 - performs best-effort Codex CLI preflight from the launcher
 
+## Standard fix and update flow
+
+Every normal fix or update must follow the same handoff: rebuild the app,
+validate the Linux patch report and native package, then queue that exact
+package with `codex-update-manager queue-package --path ...`. The updater
+stages the package privately and leaves installation deferred until ChatGPT
+Desktop exits. If a ready package is already pending, queueing the newly
+validated package replaces that pre-install candidate so a stale build cannot
+win at exit. Packages that are already being installed are never replaced.
+
+Direct package installation is an explicit recovery/manual path. It is not the
+standard workflow for a normal fix because it bypasses the validated,
+exit-triggered handoff.
+
 Codex CLI preflight preserves the detected CLI install type. npm-managed
 installs continue to update through npm, while official standalone installs
 under `~/.codex/packages/standalone` are updated with the official standalone

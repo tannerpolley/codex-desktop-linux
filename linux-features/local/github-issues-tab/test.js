@@ -216,44 +216,43 @@ function writeIssueAssetFixture() {
   const assetsDir = path.join(root, "webview", "assets");
   fs.mkdirSync(assetsDir, { recursive: true });
   fs.writeFileSync(path.join(assetsDir, "circle-dot-current.js"), "export{icon as default};", "utf8");
-  fs.writeFileSync(path.join(assetsDir, "circle-dot-dashed-current.js"), "export{icon as default};", "utf8");
-  fs.writeFileSync(path.join(assetsDir, "pull-request-actions-current.js"), "const Markdown=({children})=>children;export{Markdown as l};//# sourceMappingURL=pull-request-actions-current.js.map", "utf8");
-  fs.writeFileSync(path.join(assetsDir, "pull-request-route-current.js"), [
-    "import{l as Ht}from\"./pull-request-actions-current.js\";",
-    "const render=e=>(0,In.jsx)(Ht,{allowBasicHtml:!0,children:e});export{render};",
-  ].join(""), "utf8");
   fs.writeFileSync(path.join(assetsDir, "route.js"), [
-    "var FJ,cY,_Y=e((()=>{FJ=t(U(),1),FJ.Suspense,cY=nw(async()=>PullRequestsRoute)}));const PullRequestsRoute={};",
-    "const routes=(0,Q.jsxs)(Q.Fragment,{children:[(0,Q.jsx)(oa,{path:`/pull-requests`,element:(0,Q.jsx)(PullRequestsRoute,{})}),(0,Q.jsx)(oa,{path:`/library`,element:(0,Q.jsx)(AJ,{})})]});",
-    "const a=q(J),o=ln(),s=cl();const nav=b?(0,KR.jsx)(xp,{electron:!0,children:(0,KR.jsx)(hT,{icon:pullRequestIcon,onClick:()=>{fE(a,o)},isActive:s.pathname.startsWith(`/pull-requests`),label:(0,KR.jsx)(z,{id:`sidebarElectron.pullRequestsRouteNavLink`,defaultMessage:`Pull requests`,description:`Nav link that opens the pull requests route`})})}):null;",
+    "var j4l,h5s,_Y=e((()=>{j4l=t(U(),1),j4l.Suspense,h5s=JY(async()=>(await au(async()=>{let{PullRequestsRoute:e}=await import(`./pull-request-route-current.js`);return{PullRequestsRoute:e}},__vite__mapDeps([]),import.meta.url)).PullRequestsRoute)}));",
+    "const routes=(0,O7.jsxs)(O7.Fragment,{children:[(0,O7.jsx)(Hw,{path:`/pull-requests`,element:(0,O7.jsx)(j4l.Suspense,{fallback:(0,O7.jsx)(j5s,{}),children:(0,O7.jsx)(h5s,{})})}),(0,O7.jsx)(Hw,{path:`/library`,element:(0,O7.jsx)(AJ,{})})]});",
     "//# sourceMappingURL=route.js.map",
   ].join(""), "utf8");
   fs.writeFileSync(path.join(assetsDir, "local-conversation-thread-current.js"), [
-    "function Lv(e){let{onOpenPullRequestSidePanel:s}=e;return(0,J.jsx)(J.Section,{sectionKey:`environment`,children:[]})}",
-    "function Uv(e){let{onOpenPullRequestSidePanel:n}=e;return(0,K.jsx)(Lv,{onOpenPullRequestSidePanel:n})}",
-    "function Wv(e){return(0,K.jsx)(Lv,{})}",
-    "function Hv(e){return e.lastTurnOnly?(0,K.jsx)(Wv,{...e}):(0,K.jsx)(Uv,{...e})}",
-    "function Bb({onOpenPullRequestSidePanel:e}){return(0,H.jsx)(Hv,{onOpenPullRequestSidePanel:e})}",
-    "function zb(e){let{onOpenPullRequestSidePanel:o}=e;return(0,H.jsx)(Bb,{onOpenPullRequestSidePanel:o})}",
-    "function Lb(e){let{onOpenPullRequestSidePanel:r}=e;return(0,H.jsx)(zb,{onOpenPullRequestSidePanel:r})}",
-    "function Fb(e){let{onOpenPullRequestSidePanel:a}=e;return(0,H.jsx)(zb,{onOpenPullRequestSidePanel:a})}",
+    "function TC(e){let{cwd:n,conversationId:r,gitRoot:i,hostConfig:a,isCodexWorktree:o,onOpenPullRequestSidePanel:s,onOpenReviewTab:c,onForceShow:l,registerEnvironmentActionCommands:u}=e;let F=(0,OC.jsx)(fC,{conversationId:r,onOpenPullRequestSidePanel:s,target:{root:i},onCreatePullRequest:()=>{} });return(0,OC.jsxs)(X.Section,{sectionKey:`environment`,children:[A,j,D,P,F]})}",
+    "function jC(e){let{onOpenPullRequestSidePanel:n,onForceShow:r,registerEnvironmentActionCommands:i}=e;return(0,PC.jsx)(TC,{cwd:`/tmp`,conversationId:null,gitRoot:null,hostConfig:null,isCodexWorktree:!1,onOpenPullRequestSidePanel:n,onOpenReviewTab:()=>{},onForceShow:r,registerEnvironmentActionCommands:i})}",
+    "function MC(e){let{onForceShow:n,registerEnvironmentActionCommands:r}=e;return(0,PC.jsx)(TC,{cwd:`/tmp`,conversationId:null,gitRoot:null,hostConfig:null,isCodexWorktree:!1,onOpenReviewTab:()=>{},onForceShow:n,registerEnvironmentActionCommands:r})}",
+    "function AC(e){return(0,PC.jsx)(jC,{...e})}",
+    "function IT({onOpenPullRequestSidePanel:e,onForceShow:t,registerEnvironmentActionCommands:n}){return(0,RT.jsx)(AC,{onOpenPullRequestSidePanel:e,onForceShow:t,registerEnvironmentActionCommands:n})}",
+    "function PT(e){let{onForceShow:n,isVisible:r,registerEnvironmentActionCommands:i,onOpenBackgroundAgent:a,onOpenPullRequestSidePanel:o,onOpenSubagentsPanel:s}=e;return(0,RT.jsx)(IT,{onOpenPullRequestSidePanel:o,onForceShow:n,registerEnvironmentActionCommands:i})}",
+    "function kT(e){let{shouldHideInlineImmediately:n,shouldShow:r,onOpenBackgroundAgent:i,onOpenPullRequestSidePanel:a,onOpenSubagentsPanel:o}=e;return(0,RT.jsx)(PT,{isVisible:r,registerEnvironmentActionCommands:!0,onOpenBackgroundAgent:i,onOpenPullRequestSidePanel:a,onOpenSubagentsPanel:o,onForceShow:AT})}",
+    "function jT(e){let{onOpenBackgroundAgent:n,onOpenPullRequestSidePanel:r,onOpenSubagentsPanel:i}=e;return(0,RT.jsx)(PT,{isVisible:!0,registerEnvironmentActionCommands:!1,onOpenBackgroundAgent:n,onOpenPullRequestSidePanel:r,onOpenSubagentsPanel:i,onForceShow:MT})}",
+    "function SO({conversationId:e,pendingWorktree:t,shouldResume:n=!0,allowMissingConversation:r=!1,showUtilityBar:i=!0,composerSurfaceClassName:a,footerContent:o,isReadOnly:s=!1,showComposer:c=!0,lockedCollaborationMode:l,onOpenBackgroundAgent:u,onOpenPullRequestSidePanel:d,onOpenSubagentsPanel:f}){return(0,$.jsx)(kT,{...k,onOpenBackgroundAgent:z,onOpenPullRequestSidePanel:d,onOpenSubagentsPanel:f})}",
+    "function _O(e){let{shouldResume:n,allowMissingConversation:r,showUtilityBar:i,composerSurfaceClassName:a,footerContent:o,isReadOnly:s,showComposer:c,lockedCollaborationMode:l,onOpenBackgroundAgent:u,onOpenPullRequestSidePanel:d,onOpenSubagentsPanel:f}=e;return(0,$.jsx)(SO,{conversationId:null,pendingWorktree:null,shouldResume:n,allowMissingConversation:r,showUtilityBar:i,composerSurfaceClassName:a,footerContent:o,isReadOnly:s,showComposer:c,lockedCollaborationMode:l,onOpenBackgroundAgent:u,onOpenPullRequestSidePanel:d,onOpenSubagentsPanel:f})}",
   ].join(""), "utf8");
   fs.writeFileSync(path.join(assetsDir, "local-conversation-page-current.js"), [
-    "import{createElement as ce}from`react`;var ll,Li,Bi,Hi,qi;function ol(){}",
-    "function du(e){let n=scope,s=hostId,x=onOpenSubagentsPanel,{onOpenPullRequestSidePanel:S}=e;return(0,Q.jsx)(bo,{onOpenPullRequestSidePanel:S,onOpenSubagentsPanel:x})}",
-    "function fu(e){let{onOpenPullRequestSidePanel:r}=e;return(0,Q.jsx)(yo,{onOpenPullRequestSidePanel:r})}",
-    "function cl(e,{hostId:t,item:n,repo:r},i=!0,a=`right`){let o=`pull-request:${n.url}`,s=Li(e,o)??a;return Bi(s).openTab(e,ol,{activate:i,id:o,props:{hostId:t,item:n,repo:r}}),i&&Hi(e,s),!0}",
+    "function Xl(e,{hostId:t,item:n,repo:r,defaultMergeMenuOpen:i},a=!0,o=`right`){let s=`pull-request:${n.url}`,c=oe(e,s)??o;return ft(c).openTab(e,Jl,{activate:a,defaultState:()=>({}),icon:(0,$l.createElement)(hr,{className:`icon-xs shrink-0`,state:n.state}),id:s,props:{defaultMergeMenuOpen:i,hostId:t,item:n,repo:r},title:Ql(e,n.number),tooltip:n.title}),a&&He(e,c),!0}",
+    "function $u(e){let t=(0,ad.c)(59),{clientThreadId:n,conversationId:r}=e,i=H(Bi),a=r==null&&Br(n)?n:null,o=B(ne,r),s=B(Be,a),c=B(to,r),l=r==null?s?.hostId??`local`:c,u=pr(l),d=W(Ne),f=W(da.activeTab$),p=W(ba),m=W(Ft),O=e=>{Xl(i,e)};let k=un(O),A=r!=null&&o!=null,D=un(()=>{});return(0,Q.jsx)(ts,{allowMissingConversation:r==null,onOpenBackgroundAgent:()=>{},onOpenPullRequestSidePanel:k,onOpenSubagentsPanel:D,showUtilityBar:!1,showComposer:!0})}",
   ].join(""), "utf8");
   return { root, assetsDir };
 }
 
-test("Issues route and side-panel patches are transactional and idempotent", () => {
+function functionSlice(source, name) {
+  const functionStart = source.indexOf(`function ${name}`);
+  assert.notEqual(functionStart, -1, `fixture function ${name} is present`);
+  const nextFunction = source.indexOf("function ", functionStart + 1);
+  return source.slice(functionStart, nextFunction === -1 ? source.length : nextFunction);
+}
+
+test("current DMG Issues patches are transactional and idempotent", () => {
   const fixture = writeIssueAssetFixture();
   try {
     assert.equal(descriptors.length, 5);
     assert.equal(descriptors.filter((descriptor) => descriptor.phase === "extracted-app:post-webview").length, 4);
     assert.equal(descriptors.some((descriptor) => descriptor.id === "github-issues-renderer-route"), true);
-    assert.equal(descriptors.some((descriptor) => descriptor.id === "github-issues-navigation"), false);
     assert.equal(typeof patchIssuesSummaryAssets, "function");
     assert.equal(typeof patchIssuesSidePanelAssets, "function");
     const before = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
@@ -262,23 +261,19 @@ test("Issues route and side-panel patches are transactional and idempotent", () 
     assert.equal(first.changed, 1);
     const route = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
     assert.equal((route.match(/\/issues/g) ?? []).length, 1);
-    assert.match(route, /codexLinuxGithubIssuesRoute=nw\(async\(\)=>\{const \[issuesModule,markdownModule\]=await Promise\.all\(\[import\(`\/github-issues-tab\.mjs`\),import\(`\.\/pull-request-actions-current\.js`\)\]\)/);
-    assert.match(route, /issuesModule\.createIssuesRoute\(\{React:FJ,components:\{\},Markdown:markdownModule\.l,openExternal\}\)/);
+    assert.match(route, /codexLinuxGithubIssuesRoute=JY\(async\(\)=>\{const issuesModule=await import\(`\/github-issues-tab\.mjs`\)/);
+    assert.match(route, /issuesModule\.createIssuesRoute\(\{React:j4l,components:\{\},Markdown:null,openExternal\}\)/);
     assert.match(route, /openExternal=url=>\{try\{void Promise\.resolve\(window\.electronBridge\?\.openExternal\?\.\(url\)\)\.catch\(\(\)=>\{\}\)\}catch\{\}\}/);
-    assert.match(route, /Markdown:markdownModule\.l,openExternal\}\)\}\),cY=/);
-    assert.doesNotMatch(route, /Markdown:markdownModule\.l,openExternal\}\)\}\)\(\);/);
-    assert.doesNotMatch(route, /React\.lazy|globalThis\.codexLinuxGithubIssuesDependencies/);
-    assert.ok(route.indexOf("codexLinuxGithubIssuesRoute=nw(") > route.indexOf("FJ=t(U(),1)"));
-    assert.match(route, /var codexLinuxGithubIssuesRoute,FJ,cY,_Y=/);
+    assert.ok(route.indexOf("codexLinuxGithubIssuesRoute=JY(") > route.indexOf("j4l=t(U(),1)"));
+    assert.match(route, /var codexLinuxGithubIssuesRoute,j4l,h5s,_Y=/);
     assert.match(route, /sourceMappingURL=route\.js\.map/);
     assert.doesNotMatch(route, /children:\[const codexLinuxGithubIssuesRouteMarker/);
-    assert.equal(fs.readFileSync(path.join(fixture.assetsDir, "pull-request-actions-current.js"), "utf8"), before["pull-request-actions-current.js"]);
     const summary = patchIssuesSummaryAssets(fixture.root);
     assert.equal(summary.matched, true);
     assert.equal(summary.changed, 1);
     const sidePanel = patchIssuesSidePanelAssets(fixture.root);
     assert.equal(sidePanel.matched, true);
-    assert.equal(sidePanel.changed, 1);
+    assert.equal(sidePanel.changed, 2);
     const summarySource = fs.readFileSync(path.join(fixture.assetsDir, "local-conversation-thread-current.js"), "utf8");
     const sidePanelSource = fs.readFileSync(path.join(fixture.assetsDir, "local-conversation-page-current.js"), "utf8");
     assert.match(summarySource, new RegExp(ISSUES_ENVIRONMENT_MARKER));
@@ -287,6 +282,11 @@ test("Issues route and side-panel patches are transactional and idempotent", () 
     assert.match(sidePanelSource, new RegExp(ISSUES_SIDE_PANEL_MARKER));
     assert.match(sidePanelSource, /id:`issues`|id:\"issues\"/);
     assert.match(sidePanelSource, /createIssuesSidePanel/);
+    assert.equal((functionSlice(summarySource, "TC").match(/onOpenIssuesSidePanel:codexLinuxIssuesOpen/g) ?? []).length, 1);
+    for (const functionName of ["jC", "MC", "_O", "SO", "kT", "jT", "PT", "IT"]) {
+      assert.equal((functionSlice(summarySource, functionName).match(/onOpenIssuesSidePanel:codexLinuxIssuesOpen/g) ?? []).length, 2, `${functionName} has one binding and one child prop`);
+    }
+    assert.equal((sidePanelSource.match(/onOpenIssuesSidePanel:codexLinuxIssuesOpen/g) ?? []).length, 1);
     const after = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
     const second = patchIssuesRouteAssets(fixture.root);
     const secondSummary = patchIssuesSummaryAssets(fixture.root);
@@ -301,26 +301,22 @@ test("Issues route and side-panel patches are transactional and idempotent", () 
   }
 });
 
-test("Issues route and side-panel patches leave all files unchanged on deliberate drift", () => {
-  for (const drift of ["route", "summary", "side-panel", "dependency"]) {
+test("current DMG Issues patches leave all files unchanged on deliberate drift", () => {
+  for (const drift of ["route", "summary", "side-panel"]) {
     const fixture = writeIssueAssetFixture();
     try {
       const driftPath = path.join(
         fixture.assetsDir,
-        drift === "route" || drift === "dependency"
-          ? (drift === "dependency" ? "pull-request-actions-current.js" : "route.js")
-          : drift === "summary" ? "local-conversation-thread-current.js" : "local-conversation-page-current.js",
+        drift === "route" ? "route.js" : drift === "summary" ? "local-conversation-thread-current.js" : "local-conversation-page-current.js",
       );
       const source = fs.readFileSync(driftPath, "utf8");
       fs.writeFileSync(
         driftPath,
         drift === "route"
-          ? source.replace("PullRequestsRoute", "PullRequestRoute")
-          : drift === "dependency"
-            ? source.replaceAll("children", "body")
-            : drift === "summary"
-              ? source.replace("sectionKey:`environment`", "sectionKey:`other`")
-              : source.replace("function cl", "function other"),
+          ? source.replaceAll("PullRequestsRoute", "PullRequestRoute")
+          : drift === "summary"
+            ? source.replace("sectionKey:`environment`", "sectionKey:`other`")
+            : source.replace("function Xl", "function other"),
         "utf8",
       );
       const before = Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")]));
@@ -328,9 +324,7 @@ test("Issues route and side-panel patches leave all files unchanged on deliberat
         ? patchIssuesRouteAssets(fixture.root)
         : drift === "summary"
           ? patchIssuesSummaryAssets(fixture.root)
-          : drift === "side-panel"
-            ? patchIssuesSidePanelAssets(fixture.root)
-            : patchIssuesRouteAssets(fixture.root);
+          : patchIssuesSidePanelAssets(fixture.root);
       assert.equal(result.matched, false);
       assert.equal(result.changed, 0);
       assert.deepEqual(Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")])), before);

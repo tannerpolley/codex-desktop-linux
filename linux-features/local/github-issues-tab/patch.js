@@ -66,7 +66,6 @@ function optionalDriftStatus(result, warnings) {
 }
 
 const ISSUES_ROUTE_MARKER = "codexLinuxGithubIssuesRouteMarker";
-const ISSUES_NAV_MARKER = "sidebarElectron.issuesRouteNavLink";
 const ISSUES_ENVIRONMENT_MARKER = "codexLinuxGithubIssuesEnvironmentAction";
 const ISSUES_SIDE_PANEL_MARKER = "codexLinuxGithubOpenIssuesSidePanel";
 
@@ -159,105 +158,6 @@ function captureRouteShape(source) {
   };
 }
 
-function findPullRequestMarkdownDependency(entries) {
-  const candidates = [];
-  for (const entry of entries) {
-    if (!/^pull-request-route-.*\.js$/.test(entry.name)) continue;
-    const markdownCall = entry.source.match(/\(0,[A-Za-z_$][\w$]*\.jsx\)\(([A-Za-z_$][\w$]*),\{[^}]*allowBasicHtml:!0[^}]*children:e\}\)/);
-    if (markdownCall == null) continue;
-    const localMarkdown = markdownCall[1];
-    const importPattern = /import\{([^}]+)\}from"\.\/(pull-request-actions-[^"]+\.js)"/g;
-    for (const importMatch of entry.source.matchAll(importPattern)) {
-      const specifier = importMatch[1].split(",").map((part) => part.trim());
-      const imported = specifier.map((part) => {
-        const alias = part.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
-        if (alias != null && alias[2] === localMarkdown) return alias[1];
-        return part === localMarkdown ? part : null;
-      }).find((value) => value != null);
-      if (imported == null) continue;
-      const actionEntry = entries.find(({ name }) => name === importMatch[2]);
-      const exportBlock = actionEntry?.source.match(/export\{[^}]+\}/)?.[0] ?? "";
-      const exported = exportBlock.match(new RegExp(`\\b([A-Za-z_$][\\w$]*)\\s+as\\s+${imported}\\b`));
-      const sourceSymbol = exported?.[1];
-      const sourceStart = actionEntry == null || sourceSymbol == null
-        ? -1
-        : actionEntry.source.search(new RegExp(`(?:function|const|let|var)\\s+${sourceSymbol}\\b`));
-      if (actionEntry == null || sourceStart === -1 || !actionEntry.source.slice(sourceStart, sourceStart + 2500).includes("children")) continue;
-      candidates.push({ actionName: actionEntry.name, markdownExport: imported });
-    }
-  }
-  if (candidates.length !== 1) {
-    return {
-      error: candidates.length === 0
-        ? "no Pull Requests raw Markdown dependency asset found"
-        : `found ${candidates.length} Pull Requests raw Markdown dependency assets`,
-    };
-  }
-  return { dependency: candidates[0] };
-}
-
-function captureNavShape(source) {
-  const navStart = source.indexOf("sidebarElectron.pullRequestsRouteNavLink");
-  if (navStart === -1) return null;
-  const iconStart = source.lastIndexOf("icon:", navStart);
-  const start = iconStart === -1 ? -1 : source.lastIndexOf("(0,", iconStart);
-  if (start === -1) return null;
-  const factory = source.slice(start).match(/^\(0,[A-Za-z_$][\w$]*\.jsx\)/)?.[0];
-  if (factory == null) return null;
-  const callStart = start + factory.length;
-  let depth = 0;
-  let end = -1;
-  for (let index = callStart; index < source.length; index += 1) {
-    if (source[index] === "(") depth += 1;
-    else if (source[index] === ")") {
-      depth -= 1;
-      if (depth === 0) {
-        end = index + 1;
-        break;
-      }
-    }
-  }
-  if (end === -1) return null;
-  const block = source.slice(start, end);
-  if (!block.includes("/pull-requests") || !block.includes("defaultMessage:`Pull requests`")) return null;
-  const click = block.match(/onClick:\(\)=>\{[^{}]*\}/);
-  if (click == null) return null;
-  const navigateCall = click[0].match(/\b([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)/);
-  if (navigateCall == null) return null;
-  const navigateAlias = navigateCall[3];
-  const scopeStart = source.lastIndexOf("function ", navStart);
-  const navigateScope = source.slice(scopeStart === -1 ? 0 : scopeStart, navStart);
-  const navigateAssignments = [...navigateScope.matchAll(new RegExp(`(?:^|[,;])${navigateAlias}=ln\\(\\),`, "g"))];
-  if (navigateAssignments.length !== 1) return null;
-  return { start, end, block, navigateAlias };
-}
-
-function captureNavContainer(source, navShape) {
-  const before = source.slice(0, navShape.start);
-  const conditional = before.match(/([A-Za-z_$][\w$]*)\?\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{electron:!0,children:$/);
-  if (conditional == null) return null;
-  const callStart = before.lastIndexOf("(");
-  let depth = 0;
-  let callEnd = -1;
-  for (let index = callStart; index < source.length; index += 1) {
-    if (source[index] === "(") depth += 1;
-    else if (source[index] === ")") {
-      depth -= 1;
-      if (depth === 0) {
-        callEnd = index + 1;
-        break;
-      }
-    }
-  }
-  if (callEnd === -1 || source.slice(callEnd, callEnd + 5) !== ":null") return null;
-  return {
-    end: callEnd + 5,
-    condition: conditional[1],
-    jsxAlias: conditional[2],
-    component: conditional[3],
-  };
-}
-
 function findCircleDotImport(entries) {
   const matches = entries.filter(({ name, source }) =>
     /^circle-dot-(?!dashed-).*\.js$/.test(name) && /export\{[^}]+ as default\}/.test(source),
@@ -278,10 +178,7 @@ function patchIssuesRouteAssets(extractedDir) {
   );
   if (routeResult.error) return driftResult(routeResult.error);
   const routeEntry = routeResult.entry;
-  const dependencyResult = findPullRequestMarkdownDependency(entries);
   const routeShape = captureRouteShape(routeEntry.source);
-  const modernPullRequestRoute = routeEntry.source.includes("PullRequestsRoute:e}=await import");
-  if (dependencyResult.error && !modernPullRequestRoute) return driftResult(dependencyResult.error);
   if (routeShape == null) return driftResult("Pull Requests lazy route or route-table anchor did not match");
 
   const routeAlreadyApplied = routeEntry.source.includes(ISSUES_ROUTE_MARKER);
@@ -289,9 +186,7 @@ function patchIssuesRouteAssets(extractedDir) {
 
   const markerExpression = `const ${ISSUES_ROUTE_MARKER}=true;`;
   const routeVariable = "codexLinuxGithubIssuesRoute";
-  const routeAssignment = modernPullRequestRoute
-    ? `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const issuesModule=await import(\`/github-issues-tab.mjs\`);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:null,openExternal})})`
-    : `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const [issuesModule,markdownModule]=await Promise.all([import(\`/github-issues-tab.mjs\`),import(\`./${dependencyResult.dependency.actionName}\`)]);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:markdownModule.${dependencyResult.dependency.markdownExport},openExternal})})`;
+  const routeAssignment = `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const issuesModule=await import(\`/github-issues-tab.mjs\`);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:null,openExternal})})`;
   let routeBody = routeEntry.source;
   if (routeShape.variableInsertAt == null) {
     const independentInsertAt = routeShape.lazyInsertAt + (routeShape.expressionDelimiter === "," ? 1 : 0);
@@ -369,14 +264,21 @@ function patchFunctionBody(source, name, callback) {
 }
 
 function addIssuesCallbackBinding(body) {
-  if (body.includes("onOpenIssuesSidePanel:codexLinuxIssuesOpen")) return body;
   const headerEnd = body.indexOf("}=e");
-  if (headerEnd === -1) return null;
-  return `${body.slice(0, headerEnd)},onOpenIssuesSidePanel:codexLinuxIssuesOpen${body.slice(headerEnd)}`;
+  if (headerEnd !== -1) {
+    const header = body.slice(0, headerEnd);
+    if (header.includes("onOpenIssuesSidePanel:codexLinuxIssuesOpen")) return body;
+    return `${body.slice(0, headerEnd)},onOpenIssuesSidePanel:codexLinuxIssuesOpen${body.slice(headerEnd)}`;
+  }
+  const parameterMatch = body.match(/function [A-Za-z_$][\w$]*\(\{[^{}]*\}\)/u);
+  if (parameterMatch == null) return null;
+  if (parameterMatch[0].includes("onOpenIssuesSidePanel:codexLinuxIssuesOpen")) return body;
+  const parameterClose = parameterMatch.index + parameterMatch[0].lastIndexOf("}");
+  return `${body.slice(0, parameterClose)},onOpenIssuesSidePanel:codexLinuxIssuesOpen${body.slice(parameterClose)}`;
 }
 
 function addIssuesCallbackToCall(body, componentName) {
-  const pattern = new RegExp(`(\\.jsx\\)\\(${componentName},\\{)`);
+  const pattern = new RegExp(`(\\.jsx\\)\\(${componentName},\\{)(?!onOpenIssuesSidePanel:codexLinuxIssuesOpen,)`);
   return body.replace(pattern, "$1onOpenIssuesSidePanel:codexLinuxIssuesOpen,");
 }
 
@@ -384,121 +286,43 @@ function patchIssuesSummaryAsset(source) {
   if (source.includes(ISSUES_ENVIRONMENT_MARKER)) return source;
   if (!source.includes("sectionKey:`environment`") || !source.includes("onOpenPullRequestSidePanel")) return null;
 
-  // Current 26.721 bundles use jC/LC for the Environment summary and pass the
-  // side-panel opener directly through those two components.
-  if (findFunctionRange(source, "jC") != null && findFunctionRange(source, "LC") != null) {
-    let patched = source;
-    const bindResult = patchFunctionBody(patched, "jC", addIssuesCallbackBinding);
-    if (!bindResult.matched || bindResult.source === patched) return null;
-    patched = bindResult.source;
-    const jRange = findFunctionRange(patched, "jC");
-    if (jRange == null) return null;
-    let jBody = patched.slice(jRange.start, jRange.end);
-    const jsxMatch = jBody.match(/\(0,([A-Za-z_$][\w$]*)\.(?:jsx|jsxs)\)\(([A-Za-z_$][\w$]*)\.Section,\{sectionKey:`environment`/u);
-    if (jsxMatch == null) return null;
-    const [, jsxAlias, componentAlias] = jsxMatch;
-    const action = `const ${ISSUES_ENVIRONMENT_MARKER}=(0,${jsxAlias}.jsx)(${componentAlias}.ItemButton,{onClick:()=>{codexLinuxIssuesOpen?.()},children:(0,${jsxAlias}.jsx)(${componentAlias}.ItemLabel,{children:\`Issues\`})});`;
-    jBody = `${jBody.slice(0, jBody.indexOf("{") + 1)}${action}${jBody.slice(jBody.indexOf("{") + 1)}`;
-    const environmentIndex = jBody.indexOf("sectionKey:`environment`");
-    const childrenStart = jBody.indexOf("children:[", environmentIndex);
-    const childrenEnd = childrenStart === -1 ? -1 : jBody.indexOf("]", childrenStart);
-    if (childrenStart === -1 || childrenEnd === -1) return null;
-    jBody = `${jBody.slice(0, childrenEnd)},${ISSUES_ENVIRONMENT_MARKER}${jBody.slice(childrenEnd)}`;
-    patched = `${patched.slice(0, jRange.start)}${jBody}${patched.slice(jRange.end)}`;
-    const lcResult = patchFunctionBody(patched, "LC", (body) => {
-      const withBinding = addIssuesCallbackBinding(body);
-      if (withBinding == null) return body;
-      return withBinding.replace(
-        "onOpenPullRequestSidePanel:n,",
-        "onOpenPullRequestSidePanel:n,onOpenIssuesSidePanel:codexLinuxIssuesOpen,",
-      );
-    });
-    if (!lcResult.matched || lcResult.source === patched) return null;
-    return lcResult.source;
-  }
-
-  // 26.715 consolidated the summary into Uy and threaded the PR opener
-  // through Jx -> Qx -> $x -> Jy. Patch that stable callback chain directly.
-  if (findFunctionRange(source, "Uy") != null && findFunctionRange(source, "Yy") != null) {
-    let patched = source;
-    const bind = (name, field) => {
-      const result = patchFunctionBody(patched, name, (body) => {
-        if (body.includes(`onOpenIssuesSidePanel:${field}`)) return body;
-        const headerEnd = body.indexOf("}=e");
-        return headerEnd === -1
-          ? body
-          : `${body.slice(0, headerEnd)},onOpenIssuesSidePanel:${field}${body.slice(headerEnd)}`;
-      });
-      if (!result.matched) return false;
-      patched = result.source;
-      return true;
-    };
-    // Use the local minified names in each function's destructuring list.
-    if (!bind("Jx", "codexLinuxIssuesOpen") || !bind("Xx", "codexLinuxIssuesOpen") || !bind("Qx", "codexLinuxIssuesOpen") || !bind("$x", "codexLinuxIssuesOpen") || !bind("Yy", "codexLinuxIssuesOpen") || !bind("Xy", "codexLinuxIssuesOpen") || !bind("Uy", "codexLinuxIssuesOpen")) return null;
-    const addProp = (name, child) => {
-      const result = patchFunctionBody(patched, name, (body) => {
-        const pattern = new RegExp(`(\\.jsx\\)\\(${child},\\{)`);
-        return body.replace(pattern, "$1onOpenIssuesSidePanel:codexLinuxIssuesOpen,");
-      });
-      if (!result.matched) return false;
-      patched = result.source;
-      return true;
-    };
-    if (!addProp("Jx", "Qx") || !addProp("Xx", "Qx") || !addProp("Qx", "$x") || !addProp("$x", "Jy") || !addProp("Yy", "Uy") || !addProp("Xy", "Uy")) return null;
-
-    const uyRange = findFunctionRange(patched, "Uy");
-    if (uyRange == null) return null;
-    let body = patched.slice(uyRange.start, uyRange.end);
-    const jsxMatch = body.match(/\(0,([A-Za-z_$][\w$]*)\.(?:jsx|jsxs)\)\(([A-Za-z_$][\w$]*)\.Section,\{sectionKey:`environment`/u);
-    if (jsxMatch == null) return null;
-    const [, jsxAlias, componentAlias] = jsxMatch;
-    const action = `const ${ISSUES_ENVIRONMENT_MARKER}=(0,${jsxAlias}.jsx)(${componentAlias}.ItemButton,{onClick:()=>{codexLinuxIssuesOpen?.()},children:(0,${jsxAlias}.jsx)(${componentAlias}.ItemLabel,{children:\`Issues\`})});`;
-    body = `${body.slice(0, body.indexOf("{") + 1)}${action}${body.slice(body.indexOf("{") + 1)}`;
-    const environmentIndex = body.indexOf("sectionKey:`environment`");
-    const childrenStart = body.indexOf("children:[", environmentIndex);
-    const childrenEnd = childrenStart === -1 ? -1 : body.indexOf("]", childrenStart);
-    if (childrenStart === -1 || childrenEnd === -1) return null;
-    body = `${body.slice(0, childrenEnd)},${ISSUES_ENVIRONMENT_MARKER}${body.slice(childrenEnd)}`;
-    return `${patched.slice(0, uyRange.start)}${body}${patched.slice(uyRange.end)}`;
-  }
-
-  const required = ["Lv", "Uv", "Wv", "Hv", "Bb", "zb", "Lb", "Fb"];
   let patched = source;
-  for (const name of required) {
+  for (const [name, child] of [["jC", "TC"], ["MC", "TC"]]) {
     const result = patchFunctionBody(patched, name, (body) => {
       const withBinding = addIssuesCallbackBinding(body);
-      return withBinding == null ? body : withBinding;
+      if (withBinding == null) return body;
+      return addIssuesCallbackToCall(withBinding, child);
     });
-    if (!result.matched || result.source === patched && !findFunctionRange(patched, name)) return null;
-    patched = result.source;
-  }
-  for (const [name, child] of [["Lv", null], ["Uv", "Lv"], ["Wv", "Lv"], ["Hv", null], ["Bb", "Hv"], ["zb", "Bb"], ["Lb", "zb"], ["Fb", "zb"], ["ZS", "Fb"], ["KS", "ZS"]]) {
-    if (child == null) continue;
-    if (findFunctionRange(patched, name) == null) continue;
-    const result = patchFunctionBody(patched, name, (body) => addIssuesCallbackToCall(body, child));
-    if (!result.matched) return null;
+    if (!result.matched || result.source === patched) return null;
     patched = result.source;
   }
 
-  const range = findFunctionRange(patched, "Lv");
-  if (range == null) return null;
-  let body = patched.slice(range.start, range.end);
-  const jsxAlias = body.match(/\(0,([A-Za-z_$][\w$]*)\.(?:jsx|jsxs)\)\([A-Za-z_$][\w$]*\.Section,\{sectionKey:`environment`/u)?.[1];
-  const componentAlias = body.match(/\(0,[A-Za-z_$][\w$]*\.(?:jsx|jsxs)\)\(([A-Za-z_$][\w$]*)\.Section,\{sectionKey:`environment`/u)?.[1];
-  if (jsxAlias == null || componentAlias == null) return null;
-  const action = `const ${ISSUES_ENVIRONMENT_MARKER}=(0,${jsxAlias}.jsx)(${componentAlias}.ItemButton,{onClick:()=>{codexLinuxIssuesOpen?.()},children:(0,${jsxAlias}.jsx)(${componentAlias}.ItemLabel,{children:\`Issues\`})});`;
-  body = `${body.slice(0, body.indexOf("{") + 1)}${action}${body.slice(body.indexOf("{") + 1)}`;
-  const environmentIndex = body.indexOf("sectionKey:`environment`");
-  const childrenStart = body.indexOf("children:[", environmentIndex);
-  const childrenEnd = childrenStart === -1 ? -1 : body.indexOf("]", childrenStart);
-  if (childrenStart === -1 || childrenEnd === -1) return null;
-  body = `${body.slice(0, childrenEnd)},${ISSUES_ENVIRONMENT_MARKER}${body.slice(childrenEnd)}`;
-  return `${patched.slice(0, range.start)}${body}${patched.slice(range.end)}`;
+  const tcResult = patchFunctionBody(patched, "TC", (body) => {
+    const withBinding = addIssuesCallbackBinding(body);
+    if (withBinding == null) return body;
+    const jsxMatch = withBinding.match(/\(0,([A-Za-z_$][\w$]*)\.(?:jsx|jsxs)\)\(([A-Za-z_$][\w$]*)\.Section,\{sectionKey:`environment`/u);
+    if (jsxMatch == null) return body;
+    const [, jsxAlias, componentAlias] = jsxMatch;
+    const action = `const ${ISSUES_ENVIRONMENT_MARKER}=(0,${jsxAlias}.jsx)(${componentAlias}.ItemButton,{onClick:()=>{codexLinuxIssuesOpen?.()},children:(0,${jsxAlias}.jsx)(${componentAlias}.ItemLabel,{children:\`Issues\`})});`;
+    const functionBodyStart = withBinding.indexOf("{") + 1;
+    let next = `${withBinding.slice(0, functionBodyStart)}${action}${withBinding.slice(functionBodyStart)}`;
+    const environmentIndex = next.indexOf("sectionKey:`environment`");
+    const childrenStart = next.indexOf("children:[", environmentIndex);
+    const childrenEnd = childrenStart === -1 ? -1 : next.indexOf("]", childrenStart);
+    if (childrenStart === -1 || childrenEnd === -1) return body;
+    return `${next.slice(0, childrenEnd)},${ISSUES_ENVIRONMENT_MARKER}${next.slice(childrenEnd)}`;
+  });
+  if (!tcResult.matched || tcResult.source === patched) return null;
+  return tcResult.source;
 }
 
 function patchIssuesSummaryAssets(extractedDir) {
   const { entries } = readWebviewAssets(extractedDir);
-  const result = findOne(entries, ({ source }) => source.includes("sectionKey:`environment`") && (source.includes("function Lv") || source.includes("function jC")), "Environment summary assets");
+  const result = findOne(
+    entries,
+    ({ source }) => source.includes("function TC(") && source.includes("function jC(") && source.includes("function MC(") && source.includes("sectionKey:`environment`"),
+    "current Environment summary assets",
+  );
   if (result.error) return driftResult(result.error);
   const entry = result.entry;
   const patched = patchIssuesSummaryAsset(entry.source);
@@ -508,152 +332,89 @@ function patchIssuesSummaryAssets(extractedDir) {
   return { matched: true, changed: 1 };
 }
 
+function patchCurrentIssuesCallbackChain(source) {
+  let patched = source;
+  const steps = [
+    ["_O", "SO"],
+    ["SO", "kT"],
+    ["kT", "PT"],
+    ["jT", "PT"],
+    ["PT", "IT"],
+    ["IT", "AC"],
+  ];
+  for (const [name, child] of steps) {
+    const result = patchFunctionBody(patched, name, (body) => {
+      const withBinding = addIssuesCallbackBinding(body);
+      if (withBinding == null) return body;
+      return addIssuesCallbackToCall(withBinding, child);
+    });
+    if (!result.matched || result.source === patched) return null;
+    patched = result.source;
+  }
+  return patched;
+}
+
 function patchIssuesSidePanelAssets(extractedDir) {
   const { entries } = readWebviewAssets(extractedDir);
-  const current = entries.find(({ source }) => source.includes("function Xl(e,{hostId:") && source.includes("pull-request:") && source.includes("openTab"));
-  if (current != null && !current.source.includes(ISSUES_SIDE_PANEL_MARKER)) {
-    const icon = findCircleDotImport(entries);
-    const xlRange = findFunctionRange(current.source, "Xl");
-    if (icon == null || xlRange == null) return driftResult(icon == null ? "no unique circle-dot icon asset found for Issues side panel" : "Pull Request side-panel opener anchor did not match");
-    const xlBody = current.source.slice(xlRange.start, xlRange.end);
-    const reactAlias = xlBody.match(/\(0,([A-Za-z_$][\w$]*)\.createElement\)/)?.[1];
-    const locationAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(e,s\)\?\?o/)?.[1];
-    const openTabsAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(c\)\.openTab\(e,/)?.[1];
-    const activateAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(e,c\)/)?.[1];
-    if (reactAlias == null || locationAlias == null || openTabsAlias == null || activateAlias == null) return driftResult("Pull Request side-panel aliases did not match");
-    let patched = `import codexLinuxGithubIssuesIcon from \"./${icon.name}\";${current.source}`;
-    const opener = `const codexLinuxGithubIssuesPanel=${reactAlias}.lazy(()=>import(\`/github-issues-tab.mjs\`).then(issuesModule=>({default:issuesModule.createIssuesSidePanel({React:${reactAlias},components:{},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope,{hostId}={}){const side=${locationAlias}(scope,\`issues\`)??\`right\`;${openTabsAlias}(side).openTab(scope,codexLinuxGithubIssuesPanel,{activate:!0,defaultState:()=>({}),icon:${reactAlias}.createElement(codexLinuxGithubIssuesIcon,{className:\`icon-xs shrink-0\`}),id:\`issues\`,props:{hostId},title:\`Issues\`,tooltip:\`Issues\`});${activateAlias}(scope,side);return!0}`;
-    const xlIndex = patched.indexOf("function Xl(");
-    patched = `${patched.slice(0, xlIndex)}${opener}${patched.slice(xlIndex)}`;
-    const rootResult = patchFunctionBody(patched, "$u", (body) => {
-      const injectAt = body.indexOf("let A=Ue(k),");
-      if (injectAt === -1) return body;
-      let next = `${body.slice(0, injectAt)}let codexLinuxIssuesOpen=()=>{${ISSUES_SIDE_PANEL_MARKER}(i,{hostId:l})};${body.slice(injectAt)}`;
-      return next.replaceAll(
-        "onOpenPullRequestSidePanel:A,onOpenSubagentsPanel:O",
-        "onOpenPullRequestSidePanel:A,onOpenIssuesSidePanel:codexLinuxIssuesOpen,onOpenSubagentsPanel:O",
-      );
-    });
-    if (!rootResult.matched || rootResult.source === patched) return driftResult("local conversation root callback anchor did not match");
-    fs.writeFileSync(current.filePath, rootResult.source, "utf8");
-    return { matched: true, changed: 1 };
-  }
-  const modern = entries.find(({ source }) => source.includes("function Sl(") && source.includes("pull-request:") && source.includes("openTab"));
-  if (modern != null && !modern.source.includes(ISSUES_SIDE_PANEL_MARKER)) {
-    const icon = findCircleDotImport(entries);
-    const slRange = findFunctionRange(modern.source, "Sl");
-    if (icon == null || slRange == null) return driftResult(icon == null ? "no unique circle-dot icon asset found for Issues side panel" : "Pull Request side-panel opener anchor did not match");
-    const slBody = modern.source.slice(slRange.start, slRange.end);
-    const reactAlias = slBody.match(/\(0,([A-Za-z_$][\w$]*)\.createElement\)/)?.[1] ?? modern.source.match(/\bvar ([A-Za-z_$][\w$]*),/)?.[1];
-    const locationAlias = slBody.match(/\b([A-Za-z_$][\w$]*)\(e,o\)\?\?a/)?.[1];
-    const openTabsAlias = slBody.match(/\b([A-Za-z_$][\w$]*)\(s\)\.openTab\(/)?.[1];
-    const activateAlias = slBody.match(/\b([A-Za-z_$][\w$]*)\(e,s\)/)?.[1];
-    if (reactAlias == null || locationAlias == null || openTabsAlias == null || activateAlias == null) return driftResult("Pull Request side-panel aliases did not match");
-    let patched = `import codexLinuxGithubIssuesIcon from \"./${icon.name}\";${modern.source}`;
-    const opener = `const codexLinuxGithubIssuesPanel=${reactAlias}.lazy(()=>import(\`/github-issues-tab.mjs\`).then(issuesModule=>({default:issuesModule.createIssuesSidePanel({React:${reactAlias},components:{},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope){const side=${locationAlias}(scope,\`issues\`)??\`right\`;${openTabsAlias}(side).openTab(scope,codexLinuxGithubIssuesPanel,{activate:!0,defaultState:()=>({}),icon:${reactAlias}.createElement(codexLinuxGithubIssuesIcon,{className:\`icon-xs shrink-0\`}),id:\`issues\`,props:{},title:\`Issues\`,tooltip:\`Issues\`});${activateAlias}(scope,side);return!0}`;
-    const slIndex = patched.indexOf("function Sl(");
-    patched = `${patched.slice(0, slIndex)}${opener}${patched.slice(slIndex)}`;
-    const kuResult = patchFunctionBody(patched, "ku", (body) => {
-      if (!body.includes("onOpenPullRequestSidePanel:N")) return body;
-      const callback = `codexLinuxIssuesOpen=()=>{${ISSUES_SIDE_PANEL_MARKER}(s,{hostId:f})}`;
-      const injectAt = body.indexOf("let N=De(M)");
-      if (injectAt === -1) return body;
-      let next = `${body.slice(0, injectAt)}let ${callback};${body.slice(injectAt)}`;
-      next = next.replace("onOpenPullRequestSidePanel:N,onOpenSubagentsPanel:j", "onOpenPullRequestSidePanel:N,onOpenIssuesSidePanel:codexLinuxIssuesOpen,onOpenSubagentsPanel:j");
-      return next.replace("onOpenPullRequestSidePanel:N,onOpenSubagentsPanel:j", "onOpenPullRequestSidePanel:N,onOpenIssuesSidePanel:codexLinuxIssuesOpen,onOpenSubagentsPanel:j");
-    });
-    if (!kuResult.matched || kuResult.source === patched) return driftResult("local conversation root callback anchor did not match");
-    patched = kuResult.source;
-    fs.writeFileSync(modern.filePath, patched, "utf8");
-    return { matched: true, changed: 1 };
-  }
-  const result = findOne(entries, ({ source }) => source.includes("function cl(") && source.includes("function du(") && source.includes("function fu(") && source.includes("pull-request:"), "local conversation side-panel assets");
+  const result = findOne(
+    entries,
+    ({ source }) => source.includes("function Xl(e,{hostId:") && source.includes("pull-request:") && source.includes("openTab"),
+    "current local conversation side-panel asset",
+  );
   if (result.error) return driftResult(result.error);
-  const entry = result.entry;
-  if (entry.source.includes(ISSUES_SIDE_PANEL_MARKER)) return { matched: true, changed: 0 };
+  const current = result.entry;
+  if (current.source.includes(ISSUES_SIDE_PANEL_MARKER)) return { matched: true, changed: 0 };
+
   const icon = findCircleDotImport(entries);
-  if (icon == null) return driftResult("no unique circle-dot icon asset found for Issues side panel");
-  const clRange = findFunctionRange(entry.source, "cl");
-  if (clRange == null) return driftResult("Pull Request side-panel opener anchor did not match");
-  const clBody = entry.source.slice(clRange.start, clRange.end);
-  const reactAlias = entry.source.match(/\bvar ([A-Za-z_$][\w$]*),/)?.[1];
-  const locationAlias = clBody.match(/\b([A-Za-z_$][\w$]*)\(e,o\)\?\?a/)?.[1];
-  const openTabs = clBody.match(/\b([A-Za-z_$][\w$]*)\(s\)\.openTab\(e,([A-Za-z_$][\w$]*)/)?.slice(1);
-  const activateAlias = clBody.match(/\b([A-Za-z_$][\w$]*)\(e,s\)/)?.[1];
-  if (reactAlias == null || locationAlias == null || openTabs == null || activateAlias == null) {
+  const xlRange = findFunctionRange(current.source, "Xl");
+  if (icon == null || xlRange == null) {
+    return driftResult(icon == null
+      ? "no unique circle-dot icon asset found for Issues side panel"
+      : "Pull Request side-panel opener anchor did not match");
+  }
+  const xlBody = current.source.slice(xlRange.start, xlRange.end);
+  const reactAlias = xlBody.match(/\(0,([A-Za-z_$][\w$]*)\.createElement\)/)?.[1];
+  const locationAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(e,s\)\?\?o/)?.[1];
+  const openTabsAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(c\)\.openTab\(e,/)?.[1];
+  const activateAlias = xlBody.match(/\b([A-Za-z_$][\w$]*)\(e,c\)/)?.[1];
+  if (reactAlias == null || locationAlias == null || openTabsAlias == null || activateAlias == null) {
     return driftResult("Pull Request side-panel aliases did not match");
   }
-  const [openTabsAlias, pullRequestTab] = openTabs;
-  let patched = `import codexLinuxGithubIssuesIcon from \"./${icon.name}\";${entry.source}`;
-  const opener = `const codexLinuxGithubIssuesPanel=${reactAlias}.lazy(()=>import(\`/github-issues-tab.mjs\`).then(issuesModule=>({default:issuesModule.createIssuesSidePanel({React:${reactAlias},components:{},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope){const side=${locationAlias}(scope,\`issues\`)??\`right\`;${openTabsAlias}(side).openTab(scope,codexLinuxGithubIssuesPanel,{activate:!0,defaultState:()=>({}),icon:${reactAlias}.createElement(codexLinuxGithubIssuesIcon,{className:\`icon-xs shrink-0\`}),id:\`issues\`,props:{},title:\`Issues\`,tooltip:\`Issues\`});${activateAlias}(scope,side);return!0}`;
-  const clIndex = patched.indexOf("function cl(");
-  patched = `${patched.slice(0, clIndex)}${opener}${patched.slice(clIndex)}`;
-  const duResult = patchFunctionBody(patched, "du", (body) => {
-    const callback = `onOpenIssuesSidePanel:()=>{${ISSUES_SIDE_PANEL_MARKER}(n,{hostId:s})}`;
-    return body.replace(/onOpenPullRequestSidePanel:S,onOpenSubagentsPanel:x/g, `onOpenPullRequestSidePanel:S,${callback},onOpenSubagentsPanel:x`);
-  });
-  if (!duResult.matched || duResult.source === patched) return driftResult("local conversation du callback anchor did not match");
-  patched = duResult.source;
-  const fuResult = patchFunctionBody(patched, "fu", (body) => {
-    const withBinding = addIssuesCallbackBinding(body);
-    if (withBinding == null) return body;
-    return addIssuesCallbackToCall(withBinding, "yo");
-  });
-  if (!fuResult.matched || fuResult.source === patched) return driftResult("local conversation fu callback anchor did not match");
-  patched = fuResult.source;
-  if (!patched.includes(`onOpenIssuesSidePanel:()=>{${ISSUES_SIDE_PANEL_MARKER}`) || !patched.includes("onOpenIssuesSidePanel:codexLinuxIssuesOpen")) return driftResult("local conversation Issues callback anchors did not match");
-  fs.writeFileSync(entry.filePath, patched, "utf8");
-  return { matched: true, changed: 1 };
-}
 
-function patchIssuesNavigationAssets(extractedDir) {
-  const { entries } = readWebviewAssets(extractedDir);
-  if (!entries.some(({ source }) => source.includes(ISSUES_ROUTE_MARKER))) {
-    return { matched: false, changed: 0, reason: "GitHub Issues route marker is absent" };
+  let patched = `import codexLinuxGithubIssuesIcon from \"./${icon.name}\";${current.source}`;
+  const opener = `const codexLinuxGithubIssuesPanel=${reactAlias}.lazy(()=>import(\`/github-issues-tab.mjs\`).then(issuesModule=>({default:issuesModule.createIssuesSidePanel({React:${reactAlias},components:{},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope,{hostId}={}){const side=${locationAlias}(scope,\`issues\`)??\`right\`;${openTabsAlias}(side).openTab(scope,codexLinuxGithubIssuesPanel,{activate:!0,defaultState:()=>({}),icon:${reactAlias}.createElement(codexLinuxGithubIssuesIcon,{className:\`icon-xs shrink-0\`}),id:\`issues\`,props:{hostId},title:\`Issues\`,tooltip:\`Issues\`});${activateAlias}(scope,side);return!0}`;
+  const xlIndex = patched.indexOf("function Xl(");
+  patched = `${patched.slice(0, xlIndex)}${opener}${patched.slice(xlIndex)}`;
+  const rootResult = patchFunctionBody(patched, "$u", (body) => {
+    const injectAnchor = "let k=un(O),";
+    if (!body.includes(injectAnchor)) return body;
+    let next = body.replace(
+      injectAnchor,
+      `let codexLinuxIssuesOpen=un(()=>{${ISSUES_SIDE_PANEL_MARKER}(i,{hostId:l})}),${injectAnchor.slice(4)}`,
+    );
+    return next.replace(
+      "onOpenPullRequestSidePanel:k,onOpenSubagentsPanel:D",
+      "onOpenPullRequestSidePanel:k,onOpenIssuesSidePanel:codexLinuxIssuesOpen,onOpenSubagentsPanel:D",
+    );
+  });
+  if (!rootResult.matched || rootResult.source === patched) {
+    return driftResult("local conversation root callback anchor did not match");
   }
-  if (entries.some(({ source }) => source.includes(ISSUES_NAV_MARKER))) {
-    return { matched: true, changed: 0 };
-  }
-  const navResult = findOne(
+  patched = rootResult.source;
+
+  const threadResult = findOne(
     entries,
-    ({ source }) => source.includes("sidebarElectron.pullRequestsRouteNavLink") && source.includes("/pull-requests"),
-    "Pull Requests navigation assets",
+    ({ source }) => source.includes("function _O(") && source.includes("function SO(") && source.includes("onOpenPullRequestSidePanel"),
+    "current local conversation callback chain asset",
   );
-  if (navResult.error) return { matched: false, changed: 0, reason: navResult.error };
-  const navEntry = navResult.entry;
-  const navShape = captureNavShape(navEntry.source);
-  const icon = findCircleDotImport(entries);
-  if (navShape == null || icon == null) {
-    const reason = navShape == null ? "Pull Requests navigation anchor did not match" : "no unique circle-dot icon asset found";
-    return { matched: false, changed: 0, reason };
-  }
-  const jsxAlias = navShape.block.match(/^\(0,([A-Za-z_$][\w$]*)\.jsx\)/)?.[1];
-  if (jsxAlias == null) return { matched: false, changed: 0, reason: "navigation JSX anchor did not match" };
-  const importMarker = "codexLinuxGithubIssuesIcon";
-  let patched = navEntry.source;
-  if (!patched.includes(importMarker)) {
-    const importSource = `import ${importMarker} from \"./${icon.name}\";`;
-    patched = importSource + patched;
-  }
-  const issuesBlock = navShape.block
-    .replace(/icon:[^,]+/, `icon:${importMarker}`)
-    .replace(/onClick:\(\)=>\{[^{}]*\}/, `onClick:()=>{${navShape.navigateAlias}(\`/issues\`)}`)
-    .replaceAll("/pull-requests", "/issues")
-    .replace("sidebarElectron.pullRequestsRouteNavLink", ISSUES_NAV_MARKER)
-    .replace("defaultMessage:`Pull requests`", "defaultMessage:`Issues`")
-    .replace("description:`Nav link that opens the pull requests route`", "description:`Nav link that opens the Issues route`");
-  const sourceOffset = patched.length - navEntry.source.length;
-  const navContainer = captureNavContainer(navEntry.source, navShape);
-  if (navContainer == null) {
-    patched = `${patched.slice(0, navShape.end + sourceOffset)},${issuesBlock}${patched.slice(navShape.end + sourceOffset)}`;
-  } else {
-    const issuesContainer = `${navContainer.condition}?(0,${navContainer.jsxAlias}.jsx)(${navContainer.component},{electron:!0,children:${issuesBlock}}):null`;
-    patched = `${patched.slice(0, navContainer.end + sourceOffset)},${issuesContainer}${patched.slice(navContainer.end + sourceOffset)}`;
-  }
-  fs.writeFileSync(navEntry.filePath, patched, "utf8");
-  return { matched: true, changed: 1 };
-}
+  if (threadResult.error) return driftResult(threadResult.error);
+  const threadPatched = patchCurrentIssuesCallbackChain(threadResult.entry.source);
+  if (threadPatched == null) return driftResult("current local conversation callback chain anchors did not match");
 
+  fs.writeFileSync(current.filePath, patched, "utf8");
+  fs.writeFileSync(threadResult.entry.filePath, threadPatched, "utf8");
+  return { matched: true, changed: 2 };
+}
 const descriptors = [
   {
     id: "github-issues-main-bridge",
@@ -705,9 +466,7 @@ module.exports = {
   patchIssuesRouteAssets,
   patchIssuesSummaryAssets,
   patchIssuesSidePanelAssets,
-  patchIssuesNavigationAssets,
   ISSUES_ROUTE_MARKER,
-  ISSUES_NAV_MARKER,
   ISSUES_ENVIRONMENT_MARKER,
   ISSUES_SIDE_PANEL_MARKER,
 };

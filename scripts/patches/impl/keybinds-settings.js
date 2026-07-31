@@ -504,9 +504,11 @@ function resolveLinuxDesktopSettingsAsset(extractedDir) {
     includeHotkeySettings: false,
   });
 
-  const source = buildLinuxDesktopSettingsSource(dependencies).replace(
-    "var KEYS={",
-    linuxDesktopSettingsSourceMarker,
+  const source = addLinuxRequestInputAutoResolutionSetting(
+    buildLinuxDesktopSettingsSource(dependencies).replace(
+      "var KEYS={",
+      linuxDesktopSettingsSourceMarker,
+    ),
   );
   return {
     filePath: path.join(webviewAssetsDir, linuxDesktopSettingsAsset),
@@ -514,6 +516,27 @@ function resolveLinuxDesktopSettingsAsset(extractedDir) {
     routeAssetSpecifier: versionedAssetSpecifier(linuxDesktopSettingsAsset, source),
     generatedAssets: dependencies.generatedAssets,
   };
+}
+
+function addLinuxRequestInputAutoResolutionSetting(source) {
+  const settingKey = linuxSettingsKeys.disableRequestUserInputAutoResolution;
+  const keysMarker = `autoUpdateOnExit:"${linuxSettingsKeys.autoUpdateOnExit}"`;
+  const updateToggleMarker = `$.jsx(LinuxToggle,{settingKey:KEYS.warmStart`;
+  if (source.includes(`disableRequestUserInputAutoResolution:"${settingKey}"`)) {
+    return source;
+  }
+  if (!source.includes(keysMarker) || !source.includes(updateToggleMarker)) {
+    throw new Error("Required Keybinds settings patch failed: could not add request input auto-resolution setting");
+  }
+  return source
+    .replace(
+      keysMarker,
+      `${keysMarker},disableRequestUserInputAutoResolution:"${settingKey}"`,
+    )
+    .replace(
+      updateToggleMarker,
+      `$.jsx(LinuxToggle,{settingKey:KEYS.disableRequestUserInputAutoResolution,label:"Keep questions open",description:"Wait for an explicit answer or interruption instead of automatically submitting an empty answer.",defaultValue:!0}),${updateToggleMarker}`,
+    );
 }
 
 function collectRequiredAssetPatches(extractedDir, filenamePattern, patchFn, description) {

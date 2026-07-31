@@ -817,6 +817,254 @@ function hasCompleteLinuxBrowserUseWebviewRemountStorePatch(source) {
   );
 }
 
+function applyLinuxUserInputEscapeDismissPatch(currentSource) {
+  const functionPattern =
+    /function [A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\)\{/gu;
+  const dismissConditionPattern =
+    /([A-Za-z_$][\w$]*)\|\|([A-Za-z_$][\w$]*)!=null/u;
+
+  let match;
+  while ((match = functionPattern.exec(currentSource)) != null) {
+    const openBrace = currentSource.indexOf("{", match.index);
+    const closeBrace = findMatchingBrace(currentSource, openBrace);
+    if (closeBrace === -1) {
+      continue;
+    }
+
+    const functionSource = currentSource.slice(match.index, closeBrace + 1);
+    if (
+      !functionSource.includes("reply-with-user-input-response") ||
+      !functionSource.includes("interrupt-conversation")
+    ) {
+      continue;
+    }
+
+    if (functionSource.includes("resolutionState.status===`snoozed`")) {
+      return currentSource;
+    }
+
+    const conditionMatch = functionSource.match(dismissConditionPattern);
+    if (conditionMatch == null) {
+      continue;
+    }
+
+    const patchedFunction = functionSource.replace(
+      dismissConditionPattern,
+      `${conditionMatch[1]}||${conditionMatch[2]}?.resolutionState.status===\`snoozed\``,
+    );
+    return `${currentSource.slice(0, match.index)}${patchedFunction}${currentSource.slice(closeBrace + 1)}`;
+  }
+
+  if (
+    currentSource.includes("reply-with-user-input-response") &&
+    currentSource.includes("interrupt-conversation")
+  ) {
+    console.warn(
+      "WARN: Could not find user input dismiss condition — skipping Linux request input escape patch",
+    );
+  }
+  return currentSource;
+}
+
+function applyLinuxUserInputAutoResolutionOptOutPatch(currentSource) {
+  const settingKey = "codex-linux-disable-request-user-input-auto-resolution";
+  const marker = `codexLinuxDisableRequestUserInputAutoResolution`;
+  const functionPattern = /function [A-Za-z_$][\w$]*\([^)]*\)\{/gu;
+
+  function findGlobalStateHookAlias() {
+    const atomMatch = currentSource.match(
+      /`get-global-state`,[\s\S]{0,512}?\}\)\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(/u,
+    );
+    const atomVar = atomMatch?.[1];
+    if (atomVar == null) {
+      return null;
+    }
+    const hookMatch = currentSource.match(
+      new RegExp(
+        `function ([A-Za-z_$][\\w$]*)\\(([A-Za-z_$][\\w$]*)\\)\\{return [A-Za-z_$][\\w$]*\\(${escapeRegExp(atomVar)},\\2\\)\\}`,
+        "u",
+      ),
+    );
+    return hookMatch?.[1] ?? null;
+  }
+
+  function findReactNamespaceAlias(functionEnd) {
+    const moduleInitPattern =
+      /=[A-Za-z_$][\w$]*\(\(\(\)=>\{/gu;
+    moduleInitPattern.lastIndex = functionEnd;
+    const moduleInitMatch = moduleInitPattern.exec(currentSource);
+    if (moduleInitMatch == null) {
+      return null;
+    }
+    const moduleInitStart = moduleInitMatch.index;
+    const nextModuleInitMatch = moduleInitPattern.exec(currentSource);
+    const moduleSource = currentSource.slice(
+      moduleInitStart,
+      nextModuleInitMatch == null ? moduleInitStart + 4096 : nextModuleInitMatch.index,
+    );
+    return (
+      moduleSource.match(/\b([A-Za-z_$][\w$]*)=r\([A-Za-z_$][\w$]*\(\),1\)/u)?.[1] ??
+      currentSource.match(/\b([A-Za-z_$][\w$]*)=r\([A-Za-z_$][\w$]*\(\),1\)/u)?.[1] ??
+      null
+    );
+  }
+
+  let patchedSource = currentSource;
+  let changed = false;
+  let match;
+  const globalStateHook = findGlobalStateHookAlias();
+
+  while ((match = functionPattern.exec(currentSource)) != null) {
+    const openBrace = currentSource.indexOf("{", match.index);
+    const closeBrace = findMatchingBrace(currentSource, openBrace);
+    if (closeBrace === -1) {
+      continue;
+    }
+
+    const functionSource = currentSource.slice(match.index, closeBrace + 1);
+    if (functionSource.includes(marker)) {
+      continue;
+    }
+
+    let patchedFunction = functionSource;
+    if (
+      !functionSource.includes("reply-with-user-input-response") ||
+      !functionSource.includes("interrupt-conversation")
+    ) {
+      continue;
+    }
+    const stateMatch = functionSource.match(
+      /([;,])([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\?\.requestId===([A-Za-z_$][\w$]*)\.requestId\?\3:null([,;])/u,
+    );
+    if (stateMatch == null) {
+      continue;
+    }
+    const nestedFunctionPattern =
+      /function [A-Za-z_$][\w$]*\([^)]*\)\{/gu;
+    let nestedFunctionMatch;
+    let stateMatchIsNested = false;
+    while ((nestedFunctionMatch = nestedFunctionPattern.exec(functionSource)) != null) {
+      if (nestedFunctionMatch.index === 0 || nestedFunctionMatch.index >= stateMatch.index) {
+        continue;
+      }
+      const nestedOpenBrace = functionSource.indexOf("{", nestedFunctionMatch.index);
+      const nestedCloseBrace = findMatchingBrace(functionSource, nestedOpenBrace);
+      if (nestedCloseBrace >= stateMatch.index) {
+        stateMatchIsNested = true;
+        break;
+      }
+    }
+    if (stateMatchIsNested) {
+      continue;
+    }
+    const [, , stateVar, , requestInputVar, stateDelimiter] = stateMatch;
+    const requestContext = functionSource
+      .slice(0, stateMatch.index)
+      .match(
+        /\{([^{}]*\bconversationId:[^{}]*\bhostId:[^{}]*)\}=[A-Za-z_$][\w$]*/u,
+      )?.[1];
+    const conversationIdVar = requestContext?.match(
+      /\bconversationId:([A-Za-z_$][\w$]*)/u,
+    )?.[1];
+    const hostIdVar = requestContext?.match(
+      /\bhostId:([A-Za-z_$][\w$]*)/u,
+    )?.[1];
+    const reactVar = findReactNamespaceAlias(closeBrace + 1);
+    if (
+      conversationIdVar == null ||
+      globalStateHook == null ||
+      hostIdVar == null ||
+      reactVar == null
+    ) {
+      continue;
+    }
+    const insertion =
+      `let ${marker}=${globalStateHook}(\`${settingKey}\`)?.data!==!1;(0,${reactVar}.useEffect)(()=>{if(!${marker}||${stateVar}==null||${stateVar}.resolutionState.status===\`snoozed\`)return;gp.requestUserInputAutoResolution.snooze({conversationId:${conversationIdVar},hostId:${hostIdVar},requestId:${requestInputVar}.requestId})},[${conversationIdVar},${hostIdVar},${requestInputVar}.requestId,${stateVar},${marker}]);`;
+    if (stateDelimiter === ",") {
+      const stateValueEnd = stateMatch.index + stateMatch[0].length - 1;
+      patchedFunction =
+        functionSource.slice(0, stateValueEnd) +
+        `;${insertion}let ` +
+        functionSource.slice(stateValueEnd + 1);
+    } else {
+      const declarationEnd = functionSource.indexOf(";", stateMatch.index);
+      if (declarationEnd === -1) {
+        continue;
+      }
+      patchedFunction =
+        functionSource.slice(0, declarationEnd + 1) +
+        insertion +
+        functionSource.slice(declarationEnd + 1);
+    }
+    patchedFunction = patchedFunction
+      .replace(
+        new RegExp(
+          `${escapeRegExp(stateVar)}(?:\\?\\.|\\.)resolutionState\\.status===\`scheduled\`\\?`,
+          "gu",
+        ),
+        `!${marker}&&$&`,
+      )
+      .replace(
+        new RegExp(
+          `${escapeRegExp(stateVar)}!=null&&${escapeRegExp(stateVar)}\\.resolutionState\\.status!==\`snoozed\`\\?`,
+          "gu",
+        ),
+        `!${marker}&&$&`,
+      );
+    if (patchedFunction !== functionSource) {
+      patchedSource = patchedSource.replace(functionSource, patchedFunction);
+      changed = true;
+    }
+  }
+
+  const snoozeAction = "requestUserInputAutoResolution.snooze";
+  let snoozeActionIndex = 0;
+  while (
+    globalStateHook != null &&
+    (snoozeActionIndex = currentSource.indexOf(snoozeAction, snoozeActionIndex)) !== -1
+  ) {
+    const functionStart = currentSource.lastIndexOf("function ", snoozeActionIndex);
+    const openBrace =
+      functionStart === -1 ? -1 : currentSource.indexOf("{", functionStart);
+    const functionPrefix =
+      openBrace === -1 ? "" : currentSource.slice(functionStart, snoozeActionIndex);
+    snoozeActionIndex += snoozeAction.length;
+    if (
+      functionPrefix.includes(marker) ||
+      !functionPrefix.includes("snoozeInputTimeout")
+    ) {
+      continue;
+    }
+
+    const scheduledStatePattern =
+      /([A-Za-z_$][\w$]*)\?\.resolutionState\.status===`scheduled`\?/gu;
+    const functionBodyPrefix = currentSource.slice(openBrace + 1, snoozeActionIndex);
+    if (!scheduledStatePattern.test(functionBodyPrefix)) {
+      continue;
+    }
+    scheduledStatePattern.lastIndex = 0;
+    const patchedFunctionBodyPrefix =
+      `let ${marker}=${globalStateHook}(\`${settingKey}\`)?.data!==!1;` +
+      functionBodyPrefix.replace(
+        scheduledStatePattern,
+        `!${marker}&&$1?.resolutionState.status===\`scheduled\`?`,
+      );
+    patchedSource = patchedSource.replace(
+      functionBodyPrefix,
+      patchedFunctionBodyPrefix,
+    );
+    changed = true;
+    break;
+  }
+
+  if (!changed && currentSource.includes("reply-with-user-input-response") && !currentSource.includes(marker)) {
+    console.warn(
+      "WARN: Could not find Linux request input auto-resolution opt-out seams — skipping timer opt-out patch",
+    );
+  }
+  return patchedSource;
+}
+
 function applyLinuxBrowserUseWebviewRemountStorePatch(currentSource) {
   if (hasCompleteLinuxBrowserUseWebviewRemountStorePatch(currentSource)) {
     return currentSource;
@@ -2319,6 +2567,8 @@ module.exports = {
   applyAutomationUpdateEagerToolPatch,
   matchesAutomationUpdateEagerToolContract,
   applyLinuxChatSearchHydrationPatch,
+  applyLinuxUserInputEscapeDismissPatch,
+  applyLinuxUserInputAutoResolutionOptOutPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,
   applyLinuxBrowserUseNonLocalNavigationPatch,

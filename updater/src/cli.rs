@@ -82,6 +82,11 @@ pub enum Commands {
     },
     /// Install the already rebuilt update package, if one is ready.
     InstallReady,
+    /// Queue an already-built native package for normal updater installation.
+    QueuePackage {
+        #[arg(long)]
+        path: PathBuf,
+    },
     /// Roll back to the last retained known-good package.
     Rollback,
     /// Install a Debian package (.deb) with elevated privileges.
@@ -114,4 +119,28 @@ pub enum Commands {
         #[arg(long)]
         path: PathBuf,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::Parser;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_queue_package_path() {
+        let cli = Cli::try_parse_from([
+            "codex-update-manager",
+            "queue-package",
+            "--path",
+            "/tmp/codex-desktop.deb",
+        ])
+        .expect("queue-package should parse");
+
+        assert!(matches!(
+            cli.command,
+            Commands::QueuePackage { path }
+                if path == PathBuf::from("/tmp/codex-desktop.deb")
+        ));
+    }
 }

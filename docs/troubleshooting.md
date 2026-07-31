@@ -9,6 +9,7 @@
 | A second launch opens another app instance, or Remote Control immediately turns itself off with `EACCES ... /tmp/codex-ipc/ipc-<uid>.sock` in the logs | Update and fully restart Codex Desktop. The launcher gives Electron a private default `TMPDIR` under `$XDG_STATE_HOME/codex-desktop/tmp` (normally `~/.local/state/codex-desktop/tmp`), preventing another Linux user from owning the shared IPC directory without placing bulk temporary data in `$XDG_RUNTIME_DIR` tmpfs. An explicitly configured `TMPDIR` remains unchanged. |
 | `$XDG_RUNTIME_DIR/codex-desktop/tmp` consumes significant tmpfs memory | Update and fully restart Codex Desktop. Current launchers keep bulk temporary data in the private disk-backed app state directory while runtime-only sockets remain under `$XDG_RUNTIME_DIR`. Remove old runtime temporary directories only after confirming no older Codex Desktop process is using them. |
 | `CODEX_CLI_PATH` error | Reopen the app to retry automatic CLI install, or install manually with `npm i -g --include=optional @openai/codex` / `npm i -g --include=optional --prefix ~/.local @openai/codex` |
+| Structured questions auto-submit an empty answer | **Keep questions open** is enabled by default in the Linux build. If it was explicitly disabled, open Settings → Linux desktop and turn it back on. The picker remains available, but pending requests stay open until you answer or interrupt them. |
 | `Missing optional dependency @openai/codex-linux-x64` or malformed tool calls after a self-managed npm CLI install | Reinstall with optional dependencies: `npm i -g --include=optional @openai/codex`. To repair an existing nvm install, run `npm install --include=optional` from the installed `@openai/codex` package directory |
 | `codex-update-manager status --json` shows `cli_status: "update_required"` for `/usr/bin/codex` on Arch | Pacman itself has a newer package for the installed CLI. Update through pacman instead of npm, for example `sudo pacman -Syu`; pacman-managed CLI installs are intentionally not auto-updated through npm |
 | `codex-update-manager status --json` shows `/usr/bin/codex` with `cli_status: "up_to_date"` but `cli_official_latest_version` is newer than `cli_package_manager_latest_version` | The distro package is behind the official npm release, but pacman does not currently offer a newer package. ChatGPT Desktop will not auto-switch channels; read `cli_error_message` and decide whether to stay on the distro-managed CLI or replace it with another install method |
@@ -35,6 +36,16 @@
 | Computer Use AT-SPI tree empty | Run `codex-computer-use-linux setup`, then restart the target app |
 | `ERR_NO_SUPPORTED_PROXIES` with an authenticated proxy | Do not pass credentials inside Chromium's `--proxy-server` URL; enable the optional `authenticated-proxy` Linux feature |
 | `codex-update-manager` keeps running after package removal | Run `systemctl --user disable --now codex-update-manager.service` and confirm `/opt/codex-desktop` is gone |
+
+## Keeping structured questions open
+
+The Linux Desktop build exposes a **Keep questions open** toggle under
+Settings → Linux desktop. It is enabled when no preference has been saved and
+disables only the Desktop auto-resolution timer; the structured question UI and
+explicit answers remain enabled. Turning it off explicitly restores the
+upstream timer. The setting is persisted in
+`~/.config/codex-desktop/settings.json` as
+`codex-linux-disable-request-user-input-auto-resolution: true`.
 
 ## Persistent Launch Flags
 

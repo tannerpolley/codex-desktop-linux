@@ -136,6 +136,9 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Status { json } => run_status(&config, &mut state, &paths, json),
         Commands::Diagnose { .. } => unreachable!("diagnose is handled before runtime writes"),
         Commands::InstallReady => run_install_ready(&config, &mut state, &paths).await,
+        Commands::QueuePackage { path } => {
+            run_queue_package(&config, &mut state, &paths, &path).await
+        }
         Commands::Rollback => rollback::run(&config, &mut state, &paths).await,
         Commands::InstallDeb { path } => install::install_deb(&path),
         Commands::InstallRpm { path } => install::install_rpm(&path),
@@ -173,8 +176,128 @@ fn persist_if_changed(
     Ok(())
 }
 
+async fn run_queue_package(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    package_path: &Path,
+) -> Result<()> {
+    let Some(_check_lock) = acquire_check_lock(paths, CheckLockBehavior::Wait).await? else {
+        anyhow::bail!("Could not acquire updater state lock");
+    };
+    reload_state_from_disk(config, state, paths)?;
+    let replacing_pending = queue_package_can_replace_pending(&state.status);
+    anyhow::ensure!(
+        state.status != UpdateStatus::Installing,
+        "Cannot replace an update while installation is in progress"
+    );
+
+    let stable = install::stable_validated_package(package_path)?;
+    install::ensure_upgrade_package(stable.path())?;
+    let candidate_version = install::package_version(stable.path())?;
+    let (workspace_dir, queued_package_path) = stage_queued_package(config, stable.path())?;
+
+    record_queued_package(
+        state,
+        &candidate_version,
+        &workspace_dir,
+        &queued_package_path,
+    );
+    persist_state(paths, state)?;
+    if replacing_pending {
+        maybe_prune_workspace_cache(&config.workspace_root, state);
+    }
+    reconcile_pending_install(config, state, paths).await?;
+    if replacing_pending {
+        println!(
+            "Replaced the pending ChatGPT Desktop package with {candidate_version}; it will install after the app exits."
+        );
+    } else {
+        println!(
+            "Queued ChatGPT Desktop {candidate_version} for installation after the app exits."
+        );
+    }
+    Ok(())
+}
+
+fn queue_package_can_replace_pending(status: &UpdateStatus) -> bool {
+    matches!(
+        status,
+        UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit
+    )
+}
+
+fn stage_queued_package(config: &RuntimeConfig, package_path: &Path) -> Result<(PathBuf, PathBuf)> {
+    let nonce = format!("{}-{}", std::process::id(), Utc::now().timestamp_micros());
+    let workspaces_dir = config.workspace_root.join("workspaces");
+    let temp_workspace = workspaces_dir.join(format!(".queued-{nonce}.tmp"));
+    let workspace_dir = workspaces_dir.join(format!("queued-{nonce}"));
+    let temp_dist = temp_workspace.join("dist");
+    fs::create_dir_all(&temp_dist)
+        .with_context(|| format!("Failed to create {}", temp_dist.display()))?;
+    fs::set_permissions(&temp_workspace, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("Failed to secure {}", temp_workspace.display()))?;
+    fs::set_permissions(&temp_dist, fs::Permissions::from_mode(0o700))
+        .with_context(|| format!("Failed to secure {}", temp_dist.display()))?;
+
+    let file_name = package_path
+        .file_name()
+        .context("Queued package path has no file name")?;
+    let temp_package_path = temp_dist.join(file_name);
+    let stage_result = (|| -> Result<()> {
+        fs::copy(package_path, &temp_package_path).with_context(|| {
+            format!("Failed to stage queued package {}", package_path.display())
+        })?;
+        fs::set_permissions(&temp_package_path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("Failed to secure {}", temp_package_path.display()))?;
+        install::ensure_codex_package(&temp_package_path)?;
+        fs::rename(&temp_workspace, &workspace_dir).with_context(|| {
+            format!(
+                "Failed to promote queued package workspace {}",
+                workspace_dir.display()
+            )
+        })?;
+        Ok(())
+    })();
+    if let Err(error) = stage_result {
+        let _ = fs::remove_dir_all(&temp_workspace);
+        return Err(error);
+    }
+
+    Ok((
+        workspace_dir.clone(),
+        workspace_dir.join("dist").join(file_name),
+    ))
+}
+
+fn record_queued_package(
+    state: &mut PersistedState,
+    candidate_version: &str,
+    workspace_dir: &Path,
+    package_path: &Path,
+) {
+    state.candidate_version = Some(candidate_version.to_string());
+    state.status = UpdateStatus::ReadyToInstall;
+    state.dmg_sha256 = None;
+    state.artifact_paths.dmg_path = None;
+    state.artifact_paths.workspace_dir = Some(workspace_dir.to_path_buf());
+    state.artifact_paths.package_path = Some(package_path.to_path_buf());
+    state.waiting_for_app_exit_auto_install = false;
+    state.error_message = None;
+    state.notified_events.clear();
+}
+
 fn effective_auto_install(config: &RuntimeConfig) -> bool {
     crate::config::settings_auto_install_override().unwrap_or(config.auto_install_on_app_exit)
+}
+
+fn current_installed_package_version() -> String {
+    #[cfg(test)]
+    if let Ok(version) = std::env::var("CODEX_UPDATE_MANAGER_TEST_INSTALLED_VERSION") {
+        return version;
+    }
+
+    install::installed_package_version()
 }
 
 fn sync_runtime_state(config: &RuntimeConfig, state: &mut PersistedState) {
@@ -182,7 +305,7 @@ fn sync_runtime_state(config: &RuntimeConfig, state: &mut PersistedState) {
     if state.status != UpdateStatus::WaitingForAppExit {
         state.waiting_for_app_exit_auto_install = false;
     }
-    state.installed_version = install::installed_package_version();
+    state.installed_version = current_installed_package_version();
 }
 
 fn sync_and_persist(
@@ -326,7 +449,10 @@ fn run_daemon_startup_maintenance(
     }
 
     sync_and_persist(config, state, paths)?;
-    recover_interrupted_install(state, paths)?;
+    let interrupted_recovery = recover_interrupted_install(state, paths)?;
+    if interrupted_recovery.should_notify_installed() {
+        let _ = maybe_notify_installed(state, paths, config.notifications);
+    }
     complete_current_dmg_update_if_already_installed(config, state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
     normalize_workspace_dir_and_persist(state, paths)?;
@@ -1126,7 +1252,10 @@ async fn run_check_cycle_with_options(
     // before the lock could overwrite an active checker's workspace metadata.
     reload_state_from_disk(config, state, paths)?;
     if recover_entrypoint_state {
-        recover_interrupted_install(state, paths)?;
+        let interrupted_recovery = recover_interrupted_install(state, paths)?;
+        if interrupted_recovery.should_notify_installed() {
+            let _ = maybe_notify_installed(state, paths, config.notifications);
+        }
         complete_current_dmg_update_if_already_installed(config, state, paths)?;
         normalize_workspace_dir_and_persist(state, paths)?;
         maybe_notify_cli_missing(state, paths, config.notifications)?;
@@ -1287,7 +1416,13 @@ async fn reconcile_pending_install(
     paths: &RuntimePaths,
 ) -> Result<()> {
     sync_runtime_state(config, state);
-    recover_interrupted_install(state, paths)?;
+    let interrupted_recovery = recover_interrupted_install(state, paths)?;
+    if interrupted_recovery.completed() {
+        if interrupted_recovery.should_notify_installed() {
+            let _ = maybe_notify_installed(state, paths, config.notifications);
+        }
+        return Ok(());
+    }
     let pending_recovery = complete_pending_install_if_already_installed(state, paths)?;
     if pending_recovery.completed() {
         if pending_recovery.should_notify_installed() {
@@ -1461,7 +1596,14 @@ async fn run_install_ready_locked(
     paths: &RuntimePaths,
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
-    recover_interrupted_install(state, paths)?;
+    let interrupted_recovery = recover_interrupted_install(state, paths)?;
+    if interrupted_recovery.completed() {
+        if interrupted_recovery.should_notify_installed() {
+            let _ = maybe_notify_installed(state, paths, config.notifications);
+        }
+        println!("ChatGPT Desktop update is already installed or superseded.");
+        return Ok(());
+    }
 
     if complete_current_dmg_update_if_already_installed(config, state, paths)? {
         println!("ChatGPT Desktop is already up to date.");
@@ -1709,9 +1851,12 @@ fn complete_pending_install_if_already_installed(
     Ok(recovery)
 }
 
-fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
+fn recover_interrupted_install(
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+) -> Result<PendingInstallRecovery> {
     if state.status != UpdateStatus::Installing {
-        return Ok(());
+        return Ok(PendingInstallRecovery::NoChange);
     }
 
     if let Some(candidate_version) = state.candidate_version.clone().filter(|candidate| {
@@ -1719,6 +1864,11 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
     }) {
         let candidate_is_installed =
             installed_version_matches_candidate(&state.installed_version, &candidate_version);
+        let recovery = if candidate_is_installed {
+            PendingInstallRecovery::CandidateInstalled
+        } else {
+            PendingInstallRecovery::SupersededByInstalledVersion
+        };
 
         state.status = UpdateStatus::Installed;
         state.waiting_for_app_exit_auto_install = false;
@@ -1731,8 +1881,8 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
         state.notified_events.clear();
         cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
         persist_state(paths, state)?;
-        info!("recovered interrupted install state because the candidate version is already installed");
-        return Ok(());
+        info!("recovered interrupted install state because the candidate version is already installed or superseded");
+        return Ok(recovery);
     }
 
     let Some(package_path) = state.artifact_paths.package_path.clone() else {
@@ -1741,7 +1891,7 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
             paths,
             "Previous install attempt was interrupted and no package artifact is recorded",
         )?;
-        return Ok(());
+        return Ok(PendingInstallRecovery::NoChange);
     };
 
     if !package_path.exists() {
@@ -1753,7 +1903,7 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
                 package_path.display()
             ),
         )?;
-        return Ok(());
+        return Ok(PendingInstallRecovery::NoChange);
     }
 
     state.status = UpdateStatus::ReadyToInstall;
@@ -1763,7 +1913,7 @@ fn recover_interrupted_install(state: &mut PersistedState, paths: &RuntimePaths)
     cache_cleanup::normalize_artifact_workspace_dir(&paths.cache_dir, state);
     persist_state(paths, state)?;
     info!(package = %package_path.display(), "recovered interrupted install state back to ready_to_install");
-    Ok(())
+    Ok(PendingInstallRecovery::NoChange)
 }
 
 fn installed_version_satisfies_candidate(installed: &str, candidate: &str) -> bool {
@@ -2273,6 +2423,53 @@ mod tests {
             ),
         )?;
         Ok(())
+    }
+
+    #[test]
+    fn records_a_queued_local_package_as_ready_for_exit_install() {
+        let mut state = PersistedState::new(true);
+        state.notified_events.insert("old-candidate".to_string());
+        state.dmg_sha256 = Some("already-installed-dmg".to_string());
+        state.artifact_paths.dmg_path = Some(PathBuf::from("/tmp/Codex.dmg"));
+        let workspace = PathBuf::from("/tmp/updater-workspace");
+        let package = workspace.join("dist/codex-desktop.deb");
+
+        record_queued_package(&mut state, "2026.07.28.210146", &workspace, &package);
+
+        assert_eq!(state.status, UpdateStatus::ReadyToInstall);
+        assert_eq!(
+            state.candidate_version.as_deref(),
+            Some("2026.07.28.210146")
+        );
+        assert_eq!(
+            state.artifact_paths.workspace_dir.as_deref(),
+            Some(workspace.as_path())
+        );
+        assert_eq!(
+            state.artifact_paths.package_path.as_deref(),
+            Some(package.as_path())
+        );
+        assert!(!state.waiting_for_app_exit_auto_install);
+        assert!(state.error_message.is_none());
+        assert!(state.notified_events.is_empty());
+        assert!(state.dmg_sha256.is_none());
+        assert!(state.artifact_paths.dmg_path.is_none());
+    }
+
+    #[test]
+    fn validated_packages_can_replace_only_pre_install_pending_states() {
+        assert!(queue_package_can_replace_pending(
+            &UpdateStatus::ReadyToInstall
+        ));
+        assert!(queue_package_can_replace_pending(
+            &UpdateStatus::WaitingForAppExit
+        ));
+        assert!(!queue_package_can_replace_pending(
+            &UpdateStatus::Installing
+        ));
+        assert!(!queue_package_can_replace_pending(
+            &UpdateStatus::BuildingPackage
+        ));
     }
 
     #[test]
@@ -3498,6 +3695,51 @@ mod tests {
             Some(workspace.as_path())
         );
         assert!(workspace.join("builder/install.sh").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn daemon_startup_notifies_after_package_restart_completes_install() -> Result<()> {
+        let _env_guard = crate::test_util::env_lock();
+        let temp = tempfile::tempdir()?;
+        let paths = test_paths(temp.path());
+        paths.ensure_dirs()?;
+        let config = test_config(temp.path());
+        let installed_version = "2026.07.28.202615";
+        let _restore_env = crate::test_util::EnvRestoreGuard::capture(&[
+            "HOME",
+            "PATH",
+            "NVM_DIR",
+            "XDG_CONFIG_HOME",
+            "CODEX_CLI_PATH",
+            "CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP",
+            "CODEX_UPDATE_MANAGER_TEST_INSTALLED_VERSION",
+        ]);
+        std::env::set_var("HOME", temp.path());
+        std::env::set_var("PATH", temp.path().join("missing-bin"));
+        std::env::remove_var("NVM_DIR");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        std::env::remove_var("CODEX_CLI_PATH");
+        std::env::set_var("CODEX_UPDATE_MANAGER_SKIP_SYSTEM_CLI_LOOKUP", "1");
+        std::env::set_var(
+            "CODEX_UPDATE_MANAGER_TEST_INSTALLED_VERSION",
+            installed_version,
+        );
+
+        let mut persisted_state = PersistedState::new(true);
+        persisted_state.status = UpdateStatus::Installing;
+        persisted_state.installed_version = "2026.07.27.221707".to_string();
+        persisted_state.candidate_version = Some(installed_version.to_string());
+        persisted_state.save(&paths.state_file)?;
+
+        let mut stale_state = PersistedState::new(true);
+        run_daemon_startup_maintenance(&config, &mut stale_state, &paths)?;
+
+        assert_eq!(stale_state.status, UpdateStatus::Installed);
+        assert_eq!(stale_state.candidate_version, None);
+        assert!(stale_state
+            .notified_events
+            .contains(&format!("installed:{installed_version}")));
         Ok(())
     }
 

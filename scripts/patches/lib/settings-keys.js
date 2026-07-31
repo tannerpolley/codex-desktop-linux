@@ -7,6 +7,7 @@ const linuxSettingsKeys = {
   systemTray: "codex-linux-system-tray-enabled",
   warmStart: "codex-linux-warm-start-enabled",
   autoUpdateOnExit: "codex-linux-auto-update-on-exit",
+  disableRequestUserInputAutoResolution: "codex-linux-disable-request-user-input-auto-resolution",
   wrapperUpdates: "codex-linux-wrapper-updates-enabled",
   featurePickerOnUpdate: "codex-linux-feature-picker-on-update",
 };

@@ -111,11 +111,12 @@ function codexLinuxGithubIssuesRecord(value){if(value===null||typeof value!==\`o
 function codexLinuxGithubIssuesString(value,max,field,nonEmpty=true){if(typeof value!==\`string\`||((nonEmpty&&value.length===0)||value.length>max)||/[\\u0000-\\u001f\\u007f-\\u009f]/u.test(value))throw Error(\`invalid \${field}\`);return value}
 function codexLinuxGithubIssuesOptionalString(value,max,field){if(value===null)return null;return codexLinuxGithubIssuesString(value,max,field)}
 function codexLinuxGithubIssuesHost(value,nullable=false){if(nullable&&value===null)return;if(typeof value!==\`string\`||value.length===0||value.length>253||value.endsWith(\`.\`)||value.includes(\`..\`))throw Error(\`invalid host\`);const labels=value.split(\`.\`);if(labels.some((label)=>!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/u.test(label)))throw Error(\`invalid host\`)}
+function codexLinuxGithubIssuesRoot(value){if(value===null||value===undefined)return;if(typeof value!==\`string\`||value.length===0||value.length>4096||!value.startsWith(\`/\`)||/[\\u0000-\\u001f\\u007f-\\u009f]/u.test(value))throw Error(\`invalid root\`)}
 function codexLinuxGithubIssuesRepository(value){if(value===null)return;codexLinuxGithubIssuesString(value,200,\`repository\`);const separator=value.indexOf(\`/\`);if(separator<=0||separator!==value.lastIndexOf(\`/\`)||separator===value.length-1||!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(value.slice(0,separator))||!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(value.slice(separator+1)))throw Error(\`invalid repository\`)}
 function codexLinuxGithubIssuesFields(value,allowed){for(const key of Reflect.ownKeys(value))if(typeof key!==\`string\`||!allowed.has(key))throw Error(\`unknown request field\`)}
 function codexLinuxGithubIssuesInput(operation,input){
   if(!codexLinuxGithubIssuesRecord(input))throw Error(\`input must be an object\`);
-  if(operation===\`capabilities\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`]));codexLinuxGithubIssuesHost(input.host,true);return}
+  if(operation===\`capabilities\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`root\`]));codexLinuxGithubIssuesHost(input.host,true);codexLinuxGithubIssuesRoot(input.root);return}
   if(operation===\`cancel\`){codexLinuxGithubIssuesFields(input,new Set([\`targetRequestId\`]));codexLinuxGithubIssuesString(input.targetRequestId,96,\`targetRequestId\`);return}
   if(operation===\`listIssues\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`view\`,\`state\`,\`repository\`,\`text\`,\`cursor\`]));codexLinuxGithubIssuesHost(input.host);if(![\`assigned\`,\`authored\`,\`all\`].includes(input.view)||![\`open\`,\`closed\`,\`all\`].includes(input.state))throw Error(\`invalid list input\`);codexLinuxGithubIssuesRepository(input.repository);codexLinuxGithubIssuesString(input.text,500,\`text\`,false);codexLinuxGithubIssuesOptionalString(input.cursor,512,\`cursor\`);return}
   if(operation===\`getIssue\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`nodeId\`]));codexLinuxGithubIssuesHost(input.host);codexLinuxGithubIssuesString(input.nodeId,256,\`nodeId\`);return}
@@ -132,7 +133,7 @@ function codexLinuxGithubIssuesValidate(value){
   return {version:1,requestId:value.requestId,operation:value.operation,input:value.input};
 }
 function codexLinuxGithubIssuesError(code,message){
-  const allowed=new Set([\`invalid-request\`,\`duplicate-request\`,\`not-found\`,\`cancelled\`,\`timeout\`,\`output-limit\`,\`adapter-failed\`,\`gh-missing\`,\`gh-upgrade-required\`,\`auth-required\`,\`unauthorized\`,\`offline\`,\`rate-limited\`,\`invalid-response\`]);
+  const allowed=new Set([\`invalid-request\`,\`duplicate-request\`,\`not-found\`,\`cancelled\`,\`timeout\`,\`output-limit\`,\`adapter-failed\`,\`gh-missing\`,\`gh-upgrade-required\`,\`auth-required\`,\`unauthorized\`,\`offline\`,\`rate-limited\`,\`repository-required\`,\`invalid-response\`]);
   const safeCode=allowed.has(code)?code:\`adapter-failed\`;
   const safeMessage=typeof message===\`string\`&&!/[\\u0000-\\u001f\\u007f-\\u009f]/u.test(message)&&message.length<=500?message:\`GitHub Issues request failed\`;
   return {code:safeCode,message:safeMessage};
@@ -214,7 +215,12 @@ function applyMainBridgePatch(source) {
     /(function\s+[A-Za-z_$][\w$]*\((?:[A-Za-z_$][\w$]*,)*([A-Za-z_$][\w$]*)\)\{return\s+([A-Za-z_$][\w$]*)\.ipcMain\.handle\([^,]+,async\([^,]+,[^)]*\)=>\{if\(!\2\([^)]*\)\)return(?:;|\{))/u,
   );
   if (modernTrustedHandler != null) {
-    const insertAt = modernTrustedHandler.index;
+    const functionBodyStart = source.indexOf("{", modernTrustedHandler.index);
+    if (functionBodyStart === -1) {
+      warn("Could not identify the trusted IPC registration function body", "GitHub Issues main bridge patch");
+      return source;
+    }
+    const insertAt = functionBodyStart + 1;
     const ipcMainSymbol = modernTrustedHandler[3] + ".ipcMain";
     const trustedEventSymbol = modernTrustedHandler[2];
     return `${source.slice(0, insertAt)}${mainBridgeSource(ipcMainSymbol, trustedEventSymbol)}${source.slice(insertAt)}`;

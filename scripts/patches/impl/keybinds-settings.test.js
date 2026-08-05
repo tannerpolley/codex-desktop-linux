@@ -94,6 +94,7 @@ for (const [name, damage] of [
     "systemTray",
     "warmStart",
     "autoUpdateOnExit",
+    "githubIssues",
   ].map((key) => [
     `rejects generated Linux settings without the ${key} control`,
     (source) =>

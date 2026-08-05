@@ -812,9 +812,13 @@ test("socket environment hook shell syntax is valid", () => {
 });
 
 test("documented wrapper attaches to a real Codex authority through the stock proxy", { timeout: 15000 }, async (t) => {
+  if (process.env.CODEX_RUN_APP_SERVER_INTEGRATION !== "1") {
+    t.skip("set CODEX_RUN_APP_SERVER_INTEGRATION=1 to run the real Codex app-server integration test");
+    return;
+  }
   const codexCli = process.env.CODEX_CLI_PATH;
   if (codexCli == null) {
-    t.skip("set CODEX_CLI_PATH to run the real Codex app-server integration test");
+    t.skip("set CODEX_CLI_PATH together with CODEX_RUN_APP_SERVER_INTEGRATION=1 to run the real Codex app-server integration test");
     return;
   }
 

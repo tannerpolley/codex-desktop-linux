@@ -3,7 +3,7 @@
 const OPERATIONS = new Set(["capabilities", "listIssues", "getIssue", "getIssueTimelinePage", "cancel"]);
 const VIEWS = new Set(["assigned", "authored", "all"]);
 const STATES = new Set(["open", "closed", "all"]);
-const LIMITS = Object.freeze({ requestId: 96, host: 253, repository: 200, text: 500, cursor: 512, nodeId: 256 });
+const LIMITS = Object.freeze({ requestId: 96, host: 253, repository: 200, text: 500, cursor: 512, nodeId: 256, root: 4096 });
 
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 const HOST_LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/u;
@@ -35,8 +35,14 @@ function assertString(value, field, limit, { nonEmpty = true } = {}) {
 }
 
 function assertOptionalString(value, field, limit, { nonEmpty = true } = {}) {
-  if (value === null) return;
+  if (value === null || value === undefined) return;
   assertString(value, field, limit, { nonEmpty });
+}
+
+function assertOptionalAbsolutePath(value, field = "root") {
+  if (value === null || value === undefined) return;
+  assertString(value, field, LIMITS.root);
+  if (!value.startsWith("/")) throw new TypeError(`${field} must be an absolute path`);
 }
 
 function assertEnum(value, field, values) {
@@ -101,8 +107,9 @@ function validateInput(operation, input) {
   assertRecord(input, "input");
   switch (operation) {
     case "capabilities":
-      assertKnownFields(input, new Set(["host"]));
+      assertKnownFields(input, new Set(["host", "root"]));
       validateHostInput(input, { nullable: true });
+      assertOptionalAbsolutePath(input.root);
       break;
     case "listIssues":
       validateListInput(input);
@@ -126,7 +133,9 @@ function validateInput(operation, input) {
 function cloneInput(operation, input) {
   switch (operation) {
     case "capabilities":
-      return { host: input.host };
+      return Object.prototype.hasOwnProperty.call(input, "root")
+        ? { host: input.host, root: input.root }
+        : { host: input.host };
     case "listIssues":
       return {
         host: input.host,

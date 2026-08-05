@@ -122,6 +122,42 @@ make run-app
 ./codex-app/start.sh
 ```
 
+## Isolated Development Install
+
+For branch work and local feature previews, use the user-local development
+profile. It builds the current checkout into a separate app identity and keeps
+the installed app, Electron profile, XDG config/data/cache, webview port, and
+desktop entry separate from the stable codex-desktop installation. The GitHub
+Issues feature is enabled in the dev profile by default without changing the
+repository's ignored feature configuration.
+
+~~~bash
+make dev-install
+make dev-run
+make dev-status
+~~~
+
+The default development launcher is ~/.local/bin/codex-desktop-dev, and the
+app is installed under ~/.local/opt/codex-desktop-dev. The development profile
+uses a separate Codex home under its state root, so the dev project list and
+local Codex state are independent from the stable installation. It continues
+to use the normal GitHub CLI credentials by default so the GitHub Issues
+preview is usable immediately. Set CODEX_DEV_CODEX_HOME to choose a different
+dev home, or CODEX_DEV_SHARE_CODEX_HOME=1 only when deliberately sharing the
+stable Codex home. Override the enabled features or paths without editing the
+repository:
+
+~~~bash
+DEV_PROFILE_FEATURES=github-issues-tab make dev-install
+DEV_PROFILE_ROOT="$HOME/.local/opt/my-codex-dev" make dev-install
+~~~
+
+This is a user-local build, not a native package or updater-managed install.
+make dev-uninstall removes the development app, launcher, and desktop entry
+while preserving its state/config root for a later reinstall.
+Close the dev app before rerunning make dev-install; its transactional installer
+will refuse to replace a running dev app.
+
 ## Running The Generated App
 
 By default, second launches reuse the running app through the Linux warm-start

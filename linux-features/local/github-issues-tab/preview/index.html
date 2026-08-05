@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GitHub Issues UI Preview</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --color-token-text-primary: #f4f4f5;
+        --color-token-text-secondary: #a1a1aa;
+        --color-token-text-link-foreground: #7dd3fc;
+        --color-token-link: #7dd3fc;
+        --color-token-main-surface-primary: #18181b;
+        --color-token-main-surface-secondary: #242427;
+        --color-token-bg-secondary: #303036;
+        --color-token-border-light: #45454d;
+        --color-token-focus-border: #7dd3fc;
+        --color-token-error-foreground: #fca5a5;
+      }
+
+      * { box-sizing: border-box; }
+      html, body, #root { width: 100%; height: 100%; margin: 0; }
+      body { background: #111113; color: var(--color-token-text-primary); font: 14px/1.45 system-ui, sans-serif; }
+      button, input { font: inherit; }
+      .preview-shell { display: flex; flex-direction: column; height: 100%; min-height: 560px; }
+      .preview-banner { flex: 0 0 auto; padding: 16px 20px; border-bottom: 1px solid var(--color-token-border-light); background: #1d1d20; }
+      .preview-banner h1 { margin: 0; font-size: 18px; }
+      .preview-banner p { margin: 4px 0 0; color: var(--color-token-text-secondary); }
+      .preview-stage { display: flex; flex: 1; min-height: 0; padding: 18px; }
+      .preview-panel { display: flex; flex: 1; min-width: 0; min-height: 0; max-width: 980px; margin: 0 auto; overflow: hidden; border: 1px solid var(--color-token-border-light); border-radius: 12px; background: var(--color-token-main-surface-primary); }
+      .preview-panel > div { flex: 1; min-height: 0; }
+      .preview-markdown { line-height: 1.65; }
+      .preview-markdown h2, .preview-markdown h3 { margin: 0 0 10px; }
+      .preview-markdown p { margin: 0 0 12px; }
+      .preview-markdown ul { margin: 0 0 12px; padding-left: 22px; }
+      .preview-markdown pre { overflow: auto; padding: 12px; border: 1px solid var(--color-token-border-light); border-radius: 8px; background: #151518; }
+      .preview-markdown code { padding: 1px 4px; border-radius: 4px; background: #303036; }
+      .preview-markdown pre code { padding: 0; background: transparent; }
+      .preview-markdown blockquote { margin: 0 0 12px; padding-left: 12px; border-left: 3px solid var(--color-token-text-link-foreground); color: var(--color-token-text-secondary); }
+      .preview-markdown a { color: var(--color-token-text-link-foreground); }
+      .preview-opened { margin-top: 8px; color: var(--color-token-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module">
+      import React from "https://esm.sh/react@18.3.1";
+      import { createRoot } from "https://esm.sh/react-dom@18.3.1/client?deps=react@18.3.1";
+      import { createIssuesSidePanel } from "../renderer.mjs";
+      import { details, issues, rateLimit } from "./fixtures.mjs";
+
+      const fixtureRepository = issues[0]?.repository || "unknown/unknown";
+      const previewResponse = (requestId, data) => ({ version: 1, requestId, ok: true, data, error: null });
+
+      window.electronBridge = {
+        githubIssues: {
+          request: async (request) => {
+            await new Promise((resolve) => setTimeout(resolve, 80));
+            switch (request.operation) {
+              case "capabilities":
+                return previewResponse(request.requestId, { host: "github.com", viewerLogin: "preview-user", repository: fixtureRepository, rateLimit, warnings: [] });
+              case "listIssues":
+                return previewResponse(request.requestId, { host: "github.com", viewerLogin: "preview-user", issues, pageInfo: { hasNextPage: false, endCursor: null }, rateLimit, warnings: [] });
+              case "getIssue":
+                return previewResponse(request.requestId, details[request.input.nodeId] || { issue: null, timeline: { items: [], pageInfo: { hasNextPage: false, endCursor: null } }, rateLimit, warnings: [] });
+              case "getIssueTimelinePage":
+                return previewResponse(request.requestId, { items: [], pageInfo: { hasNextPage: false, endCursor: null }, rateLimit, warnings: [] });
+              case "cancel":
+                return previewResponse(request.requestId, {});
+              default:
+                return { version: 1, requestId: request.requestId, ok: false, data: null, error: { code: "invalid-response", message: "Unsupported preview operation" } };
+            }
+          },
+        },
+      };
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+      }
+
+      function inlineMarkdown(value) {
+        return escapeHtml(value)
+          .replace(/`([^`]+)`/g, "<code>$1</code>")
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+          .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+      }
+
+      function markdownToHtml(markdown) {
+        const lines = String(markdown || "").split("\n");
+        const output = [];
+        let inCode = false;
+        let inList = false;
+        for (const line of lines) {
+          if (line.startsWith("```")) {
+            if (inList) { output.push("</ul>"); inList = false; }
+            output.push(inCode ? "</code></pre>" : "<pre><code>");
+            inCode = !inCode;
+            continue;
+          }
+          if (inCode) { output.push(escapeHtml(line) + "\n"); continue; }
+          if (/^#{1,3} /.test(line)) {
+            if (inList) { output.push("</ul>"); inList = false; }
+            const level = Math.min(3, line.match(/^#+/)[0].length);
+            output.push(`<h${level}>${inlineMarkdown(line.slice(level + 1))}</h${level}>`);
+          } else if (line.startsWith("- ")) {
+            if (!inList) { output.push("<ul>"); inList = true; }
+            output.push(`<li>${inlineMarkdown(line.slice(2))}</li>`);
+          } else if (line.startsWith("> ")) {
+            if (inList) { output.push("</ul>"); inList = false; }
+            output.push(`<blockquote>${inlineMarkdown(line.slice(2))}</blockquote>`);
+          } else if (line.trim() !== "") {
+            if (inList) { output.push("</ul>"); inList = false; }
+            output.push(`<p>${inlineMarkdown(line)}</p>`);
+          } else if (inList) {
+            output.push("</ul>");
+            inList = false;
+          }
+        }
+        if (inList) output.push("</ul>");
+        if (inCode) output.push("</code></pre>");
+        return output.join("");
+      }
+
+      function PreviewMarkdown({ content, source, children }) {
+        const markdown = content ?? source ?? children ?? "";
+        return React.createElement("div", { className: "preview-markdown", dangerouslySetInnerHTML: { __html: markdownToHtml(markdown) } });
+      }
+
+      const IssuesPanel = createIssuesSidePanel({
+        React,
+        Markdown: PreviewMarkdown,
+        hostId: "github.com",
+        root: "/fixture/cli-cli",
+        getSetting: async () => ({ value: true }),
+        openExternal: (url) => { document.title = `Opened ${url}`; },
+      });
+
+      function PreviewApp() {
+        return React.createElement("div", { className: "preview-shell" },
+          React.createElement("header", { className: "preview-banner" },
+            React.createElement("h1", null, "GitHub Issues UI Preview"),
+            React.createElement("p", null, `Fixture mode · Repository fixture: ${fixtureRepository} · four issues · click a card to expand it inline, then click again to collapse it.`),
+            React.createElement("div", { className: "preview-opened", role: "status" }, "No external links are opened from this preview."),
+          ),
+          React.createElement("div", { className: "preview-stage" },
+            React.createElement("div", { className: "preview-panel" }, React.createElement(IssuesPanel)),
+          ),
+        );
+      }
+
+      createRoot(document.getElementById("root")).render(React.createElement(PreviewApp));
+    </script>
+  </body>
+</html>

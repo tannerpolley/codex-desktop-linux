@@ -10,6 +10,7 @@
 | `$XDG_RUNTIME_DIR/codex-desktop/tmp` consumes significant tmpfs memory | Update and fully restart Codex Desktop. Current launchers keep bulk temporary data in the private disk-backed app state directory while runtime-only sockets remain under `$XDG_RUNTIME_DIR`. Remove old runtime temporary directories only after confirming no older Codex Desktop process is using them. |
 | `CODEX_CLI_PATH` error | Reopen the app to retry automatic CLI install, or install manually with `npm i -g --include=optional @openai/codex` / `npm i -g --include=optional --prefix ~/.local @openai/codex` |
 | Structured questions auto-submit an empty answer | **Keep questions open** is enabled by default in the Linux build. If it was explicitly disabled, open Settings → Linux desktop and turn it back on. The picker remains available, but pending requests stay open until you answer or interrupt them. |
+| GitHub Issues is unstable or fails repeatedly | Open Settings → Linux desktop and turn **GitHub Issues** off. The Issues view stops making GitHub requests and shows a disabled status; turn it back on after rebuilding or updating the feature. |
 | `Missing optional dependency @openai/codex-linux-x64` or malformed tool calls after a self-managed npm CLI install | Reinstall with optional dependencies: `npm i -g --include=optional @openai/codex`. To repair an existing nvm install, run `npm install --include=optional` from the installed `@openai/codex` package directory |
 | `codex-update-manager status --json` shows `cli_status: "update_required"` for `/usr/bin/codex` on Arch | Pacman itself has a newer package for the installed CLI. Update through pacman instead of npm, for example `sudo pacman -Syu`; pacman-managed CLI installs are intentionally not auto-updated through npm |
 | `codex-update-manager status --json` shows `/usr/bin/codex` with `cli_status: "up_to_date"` but `cli_official_latest_version` is newer than `cli_package_manager_latest_version` | The distro package is behind the official npm release, but pacman does not currently offer a newer package. ChatGPT Desktop will not auto-switch channels; read `cli_error_message` and decide whether to stay on the distro-managed CLI or replace it with another install method |
@@ -46,6 +47,12 @@ explicit answers remain enabled. Turning it off explicitly restores the
 upstream timer. The setting is persisted in
 `~/.config/codex-desktop/settings.json` as
 `codex-linux-disable-request-user-input-auto-resolution: true`.
+
+The optional GitHub Issues feature also has a **GitHub Issues** toggle under
+Settings → Linux desktop. It defaults on when the feature is enabled. Turning
+it off persists `codex-linux-github-issues-enabled: false`, prevents the Issues
+view from starting GitHub requests, and leaves the rest of the desktop app
+available while the feature is being repaired.
 
 ## Persistent Launch Flags
 

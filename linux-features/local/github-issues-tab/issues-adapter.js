@@ -206,7 +206,7 @@ function buildSearchQuery(input, viewerLogin) {
   const terms = ["is:issue"];
   if (input.view === "assigned") terms.push(`assignee:${viewerLogin}`);
   else if (input.view === "authored") terms.push(`author:${viewerLogin}`);
-  else terms.push(`involves:${viewerLogin}`);
+  else if (input.repository === null) terms.push(`involves:${viewerLogin}`);
   if (input.state !== "all") terms.push(`is:${input.state}`);
   if (input.repository !== null) terms.push(`repo:${input.repository}`);
   if (input.text.trim().length > 0) terms.push(input.text.trim());
@@ -474,9 +474,37 @@ function isSupportedVersionText(versionText) {
   return true;
 }
 
+function parseRepositoryRemote(value) {
+  if (typeof value !== "string" || value.trim().length === 0) return null;
+  const remote = value.trim();
+  let remoteHost;
+  let remotePath;
+  const scp = remote.match(/^[^@/:]+@([^/:]+):(.+)$/u);
+  if (scp) {
+    remoteHost = scp[1];
+    remotePath = scp[2];
+  } else {
+    try {
+      const parsed = new URL(remote);
+      remoteHost = parsed.hostname;
+      remotePath = parsed.pathname;
+    } catch {
+      return null;
+    }
+  }
+  const parts = remotePath
+    .replace(/^\/+|\/+$/gu, "")
+    .replace(/\.git$/iu, "")
+    .split("/");
+  if (parts.length !== 2 || !parts.every((part) => /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/u.test(part))) return null;
+  if (typeof remoteHost !== "string" || !/^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/u.test(remoteHost)) return null;
+  return { host: remoteHost.toLowerCase(), repository: parts.join("/") };
+}
+
 function spawnJson(commandArgs, deps = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
   const spawn = deps.spawn || defaultSpawn;
-  const ghPath = deps.ghPath || "gh";
+  const command = deps.command || deps.ghPath || "gh";
+  const parseJson = deps.parseJson !== false;
   return new Promise((resolve, reject) => {
     let child;
     let settled = false;
@@ -490,7 +518,7 @@ function spawnJson(commandArgs, deps = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
       callback(value);
     };
     try {
-      child = spawn(ghPath, commandArgs, { stdio: ["pipe", "pipe", "pipe"] });
+      child = spawn(command, commandArgs, { stdio: ["pipe", "pipe", "pipe"] });
     } catch (error) {
       finish(reject, fixedError(error?.code === "ENOENT" ? "gh-missing" : "adapter-failed", error?.code === "ENOENT" ? "GitHub CLI is not installed" : "GitHub CLI could not be started"));
       return;
@@ -531,7 +559,7 @@ function spawnJson(commandArgs, deps = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
         finish(reject, fixedError(type, type === "auth-required" ? "GitHub CLI authentication is required" : type === "unauthorized" ? "GitHub authorization was denied" : type === "offline" ? "GitHub could not be reached" : type === "rate-limited" ? "GitHub API rate limit reached" : "GitHub CLI request failed"));
         return;
       }
-      if (commandArgs[0] === "--version") {
+      if (commandArgs[0] === "--version" || !parseJson) {
         finish(resolve, { text: stdout });
         return;
       }
@@ -621,7 +649,23 @@ function warningList(errors) {
   }));
 }
 
-async function fetchCapabilities(host, deps) {
+async function resolveRepository(root, host, deps) {
+  if (root === null || root === undefined) return null;
+  let response;
+  try {
+    response = await spawnJson(["-C", root, "config", "--get", "remote.origin.url"], { ...deps, command: "git", parseJson: false });
+  } catch {
+    throw fixedError("repository-required", "The workspace has no usable GitHub origin remote");
+  }
+  const remote = parseRepositoryRemote(response.text);
+  if (remote === null || remote.host !== host.toLowerCase()) {
+    throw fixedError("repository-required", "The workspace origin is not a remote for the selected GitHub host");
+  }
+  return remote.repository;
+}
+
+async function fetchCapabilities(host, root, deps) {
+  const repository = await resolveRepository(root, host, deps);
   const response = await callGh(["api", "graphql", "--hostname", host, "--input", "-"], { query: QUERIES.capabilities, variables: {} }, deps);
   const category = classifyGraphQLErrors(response.errors);
   if (!isRecord(response.data) || !isRecord(response.data.viewer) || typeof response.data.viewer.login !== "string" || response.data.viewer.login.length === 0) {
@@ -630,14 +674,16 @@ async function fetchCapabilities(host, deps) {
   return {
     host,
     viewerLogin: response.data.viewer.login,
+    repository,
     rateLimit: rateLimit(response.data.rateLimit),
     ...(response.errors ? { warnings: warningList(response.errors) } : {}),
   };
 }
 
 async function listIssues(input, deps) {
+  if (input.repository === null) throw fixedError("repository-required", "A GitHub repository is required to load Issues");
   const host = await resolveHost(input.host, deps);
-  const capabilities = await fetchCapabilities(host, deps);
+  const capabilities = await fetchCapabilities(host, null, deps);
   const search = buildSearchQuery(input, capabilities.viewerLogin);
   const response = await callGh(["api", "graphql", "--hostname", host, "--input", "-"], { query: QUERIES.list, variables: { search, cursor: input.cursor } }, deps);
   const category = classifyGraphQLErrors(response.errors);
@@ -713,7 +759,10 @@ async function runOperation(envelope, deps = {}) {
     throw fixedError("invalid-response", "Invalid adapter request");
   }
   await ensureGhVersion(deps);
-  if (normalized.operation === "capabilities") return fetchCapabilities(await resolveHost(normalized.input.host, deps), deps);
+  if (normalized.operation === "capabilities") {
+    const host = await resolveHost(normalized.input.host, deps);
+    return fetchCapabilities(host, normalized.input.root ?? null, deps);
+  }
   if (normalized.operation === "listIssues") return listIssues(normalized.input, deps);
   if (normalized.operation === "getIssue") return getIssue(normalized.input, deps);
   if (normalized.operation === "getIssueTimelinePage") return getIssueTimelinePage(normalized.input, deps);
@@ -761,6 +810,7 @@ module.exports = {
   DETAIL_QUERY,
   TIMELINE_QUERY,
   buildSearchQuery,
+  parseRepositoryRemote,
   normalizeIssue,
   normalizeTimelineItem,
   getIssue,

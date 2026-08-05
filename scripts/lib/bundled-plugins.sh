@@ -1253,10 +1253,6 @@ PY
 patch_browser_use_node_repl_env_guard() {
     local client="$1"
 
-    if grep -Eq 'globalThis\.nodeRepl\?\.env\?\.\[[^]]+\]' "$client"; then
-        return 0
-    fi
-
     python3 - "$client" <<'PY'
 from pathlib import Path
 import re
@@ -1264,28 +1260,45 @@ import sys
 
 path = Path(sys.argv[1])
 source = path.read_text(encoding="utf-8")
-pattern = re.compile(
-    r'function (?P<helper>[A-Za-z_$][\w$]*)\((?P<key>[A-Za-z_$][\w$]*)\)\{'
-    r'let (?P<value>[A-Za-z_$][\w$]*)=globalThis\.nodeRepl\?\.env\[(?P=key)\];'
-    r'return typeof (?P=value)=="string"\?(?P=value):void 0\}'
-)
-match = pattern.search(source)
-if match is None:
-    print(
-        "WARN: Could not find Browser Use nodeRepl env guard insertion point — leaving browser-client.mjs unchanged",
-        file=sys.stderr,
-    )
-    raise SystemExit(0)
+changed = False
 
-helper = match.group("helper")
-key = match.group("key")
-value = match.group("value")
-replacement = (
-    f'function {helper}({key}){{'
-    f'let {value}=globalThis.nodeRepl?.env?.[{key}];'
-    f'return typeof {value}=="string"?{value}:void 0}}'
+# Keep the generic environment helper safe when node_repl.env is absent.
+if not re.search(r'globalThis\.nodeRepl\?\.env\?\.\[[^]]+\]', source):
+    pattern = re.compile(
+        r'function (?P<helper>[A-Za-z_$][\w$]*)\((?P<key>[A-Za-z_$][\w$]*)\)\{'
+        r'let (?P<value>[A-Za-z_$][\w$]*)=globalThis\.nodeRepl\?\.env\[(?P=key)\];'
+        r'return typeof (?P=value)=="string"\?(?P=value):void 0\}'
+    )
+    match = pattern.search(source)
+    if match is None:
+        print(
+            "WARN: Could not find Browser Use nodeRepl env guard insertion point — leaving browser-client.mjs unchanged",
+            file=sys.stderr,
+        )
+    else:
+        helper = match.group("helper")
+        key = match.group("key")
+        value = match.group("value")
+        replacement = (
+            f'function {helper}({key}){{'
+            f'let {value}=globalThis.nodeRepl?.env?.[{key}];'
+            f'return typeof {value}=="string"?{value}:void 0}}'
+        )
+        source = source[:match.start()] + replacement + source[match.end():]
+        changed = True
+
+# Newer Browser Use clients read the safety state directly from the node_repl
+# object. Guard those reads independently of the generic helper above; the
+# generic helper may already be optional-chained in upstream code.
+source, safety_reads = re.subn(
+    r'(?P<binding>[A-Za-z_$][\w$]*)\.env\[(?P<key>Es|Bl)\]',
+    lambda match: f'{match.group("binding")}.env?.[{match.group("key")}]',
+    source,
 )
-path.write_text(source[:match.start()] + replacement + source[match.end():], encoding="utf-8")
+changed = changed or safety_reads > 0
+
+if changed:
+    path.write_text(source, encoding="utf-8")
 PY
 }
 

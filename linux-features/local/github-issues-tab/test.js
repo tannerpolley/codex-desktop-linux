@@ -59,7 +59,7 @@ test("protocol exports bounded operation sets and limits", () => {
   assert.deepEqual([...OPERATIONS], ["capabilities", "listIssues", "getIssue", "getIssueTimelinePage", "cancel"]);
   assert.deepEqual([...VIEWS], ["assigned", "authored", "all"]);
   assert.deepEqual([...STATES], ["open", "closed", "all"]);
-  assert.deepEqual(LIMITS, { requestId: 96, host: 253, repository: 200, text: 500, cursor: 512, nodeId: 256 });
+  assert.deepEqual(LIMITS, { requestId: 96, host: 253, repository: 200, text: 500, cursor: 512, nodeId: 256, root: 4096 });
   assert.equal(Object.isFrozen(LIMITS), true);
 });
 
@@ -211,13 +211,29 @@ test("preload descriptor scans only .vite/build JavaScript and reports optional 
   assert.equal(typeof preloadDescriptor?.apply, "function");
 });
 
-function writeIssueAssetFixture() {
+function writeIssueAssetFixture({ separateRouteDeclaration = false, includeMarkdownRenderer = false, includeRequestApi = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "github-issues-route-"));
   const assetsDir = path.join(root, "webview", "assets");
   fs.mkdirSync(assetsDir, { recursive: true });
   fs.writeFileSync(path.join(assetsDir, "circle-dot-current.js"), "export{icon as default};", "utf8");
+  if (includeRequestApi) {
+    fs.writeFileSync(path.join(assetsDir, "request-api-current.js"), 'function requestCodex(...args){let[request]=args,{params:params,select:select,signal:signal,source:source}=request??{};return rawCodex("method",params,select,signal,source)}async function rawCodex(method,params,select,signal,source){return transport.post(`vscode://codex/${method}`,params,source,signal)}export{requestCodex as R};', "utf8");
+  }
+  if (includeMarkdownRenderer) {
+    fs.writeFileSync(path.join(assetsDir, "pull-request-detail-query-current.js"), [
+      "import{w as qr}from\"./pull-request-code-review-state-current.js\";",
+      "function Ea(e){let{account:n,body:i}=e;return(0,J.jsx)(K,{id:`pullRequestDetail.description.title`}),i.trim().length>0?(0,J.jsx)(qr,{account:n,allowBasicHtml:!0,className:`min-w-0`,cwd:null,children:i}):null}",
+    ].join(""), "utf8");
+  }
   fs.writeFileSync(path.join(assetsDir, "route.js"), [
-    "var j4l,h5s,_Y=e((()=>{j4l=t(U(),1),j4l.Suspense,h5s=JY(async()=>(await au(async()=>{let{PullRequestsRoute:e}=await import(`./pull-request-route-current.js`);return{PullRequestsRoute:e}},__vite__mapDeps([]),import.meta.url)).PullRequestsRoute)}));",
+    ...(separateRouteDeclaration
+      ? [
+        "var j4l=t(U(),1);",
+        "var f5s,p5s,m5s,h5s,g5s,_5s=e((()=>{j4l.Suspense,m5s=JY(async()=>(await au(async()=>{let{PullRequestsRoute:e}=await import(`./pull-request-route-current.js`);return{PullRequestsRoute:e}},__vite__mapDeps([]),import.meta.url)).PullRequestsRoute)}));",
+      ]
+      : [
+        "var j4l,h5s,_Y=e((()=>{j4l=t(U(),1),j4l.Suspense,h5s=JY(async()=>(await au(async()=>{let{PullRequestsRoute:e}=await import(`./pull-request-route-current.js`);return{PullRequestsRoute:e}},__vite__mapDeps([]),import.meta.url)).PullRequestsRoute)}));",
+      ]),
     "const routes=(0,O7.jsxs)(O7.Fragment,{children:[(0,O7.jsx)(Hw,{path:`/pull-requests`,element:(0,O7.jsx)(j4l.Suspense,{fallback:(0,O7.jsx)(j5s,{}),children:(0,O7.jsx)(h5s,{})})}),(0,O7.jsx)(Hw,{path:`/library`,element:(0,O7.jsx)(AJ,{})})]});",
     "//# sourceMappingURL=route.js.map",
   ].join(""), "utf8");
@@ -296,6 +312,50 @@ test("current DMG Issues patches are transactional and idempotent", () => {
     assert.deepEqual(secondSidePanel, { matched: true, changed: 0 });
     assert.deepEqual(Object.fromEntries(fs.readdirSync(fixture.assetsDir).map((name) => [name, fs.readFileSync(path.join(fixture.assetsDir, name), "utf8")])), after);
     assert.notDeepEqual(before, after);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Issues route patch remains valid when React and lazy routes use separate declarations", () => {
+  const fixture = writeIssueAssetFixture({ separateRouteDeclaration: true });
+  try {
+    const result = patchIssuesRouteAssets(fixture.root);
+    assert.deepEqual(result, { matched: true, changed: 1 });
+    const route = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
+    assert.doesNotThrow(() => new vm.Script(route.replaceAll("import.meta", "({ url: \"\" })")), "patched route remains syntactically valid");
+    assert.match(route, /let codexLinuxGithubIssuesRoute;/);
+    assert.match(route, /(?:^|,)codexLinuxGithubIssuesRoute=JY\(async\(\)=>/);
+    assert.doesNotMatch(route, /\bconst codexLinuxGithubIssuesRoute=/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Issues route reuses the current Pull Request Markdown renderer when available", () => {
+  const fixture = writeIssueAssetFixture({ includeMarkdownRenderer: true });
+  try {
+    assert.deepEqual(patchIssuesRouteAssets(fixture.root), { matched: true, changed: 1 });
+    const route = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
+    assert.match(route, /Markdown:\(await import\("\/assets\/pull-request-code-review-state-current\.js"\)\)\.w/);
+    assert.deepEqual(patchIssuesSidePanelAssets(fixture.root), { matched: true, changed: 2 });
+    const sidePanel = fs.readFileSync(path.join(fixture.assetsDir, "local-conversation-page-current.js"), "utf8");
+    assert.match(sidePanel, /Markdown:\(await import\("\/assets\/pull-request-code-review-state-current\.js"\)\)\.w/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("Issues patches reuse the shared settings request API when available", () => {
+  const fixture = writeIssueAssetFixture({ includeRequestApi: true });
+  try {
+    assert.deepEqual(patchIssuesRouteAssets(fixture.root), { matched: true, changed: 1 });
+    const route = fs.readFileSync(path.join(fixture.assetsDir, "route.js"), "utf8");
+    assert.match(route, /getSetting:key=>\(await import\("\/assets\/request-api-current\.js"\)\)\.R\("get-global-state",\{params:\{key:"codex-linux-github-issues-enabled"\}\}\)/);
+
+    assert.deepEqual(patchIssuesSidePanelAssets(fixture.root), { matched: true, changed: 2 });
+    const sidePanel = fs.readFileSync(path.join(fixture.assetsDir, "local-conversation-page-current.js"), "utf8");
+    assert.match(sidePanel, /getSetting:key=>\(await import\("\/assets\/request-api-current\.js"\)\)\.R\("get-global-state",\{params:\{key:"codex-linux-github-issues-enabled"\}\}\)/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }
@@ -503,6 +563,17 @@ test("main patch selects exactly one trusted message handler and rejects legacy 
   assert.equal(applyMainBridgePatch(ambiguous), ambiguous);
 });
 
+test("modern main patch keeps the trusted predicate inside its registration function", () => {
+  const source = "function register(e,t){return electron.ipcMain.handle(`message`,async(e,r)=>{if(!t(e))return;return r})}";
+  const patched = applyMainBridgePatch(source);
+  assert.notEqual(patched, source);
+  const functionBodyStart = patched.indexOf("{", patched.indexOf("function register"));
+  const bridgeStart = patched.indexOf("(function(){", functionBodyStart);
+  assert.ok(bridgeStart > functionBodyStart);
+  assert.ok(bridgeStart < patched.indexOf("return electron.ipcMain.handle", functionBodyStart));
+  assert.match(patched, /electron\.ipcMain\.handle\(codexLinuxGithubIssuesChannel,async\(event,request\)=>\{if\(!t\(event\)\)return;/);
+});
+
 test("main bridge terminates only owned process groups and cleans up on exit", async () => {
   const children = [];
   const handler = createBridgeVm(() => {
@@ -693,6 +764,14 @@ test("reducer models loading, partial, populated, and typed error transitions", 
   assert.equal(state.list.error.code, "offline");
 });
 
+test("capabilities response pins the renderer to the workspace repository", async () => {
+  const { initialIssuesState, issuesReducer } = await renderer();
+  let state = initialIssuesState();
+  state = issuesReducer(state, { type: "capabilities-start", requestId: "cap-1" });
+  state = issuesReducer(state, { type: "capabilities-success", requestId: "cap-1", data: { host: "github.com", repository: "tannerpolley/codex-desktop-linux", viewerLogin: "tannerpolley" } });
+  assert.equal(state.repository, "tannerpolley/codex-desktop-linux");
+});
+
 test("detail timeline-only warnings preserve the issue and mark timeline partial", async () => {
   const { initialIssuesState, issuesReducer } = await renderer();
   let state = initialIssuesState();
@@ -827,6 +906,32 @@ test("renderer source includes debounce and identity-safe pending cleanup", () =
   assert.match(source, /pending\.current\.detail\s*===\s*requestId/);
 });
 
+test("renderer gates GitHub Issues requests behind the Linux desktop setting", () => {
+  const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
+  assert.match(source, /codex-linux-github-issues-enabled/);
+  assert.match(source, /getSetting\(GITHUB_ISSUES_SETTING_KEY\)/);
+  assert.match(source, /result\?\.value !== false/);
+  assert.match(source, /featureEnabled !== true/);
+  assert.match(source, /GitHub Issues is disabled in Settings → Linux desktop/);
+});
+
+test("initial list effect does not reload when pagination state changes", () => {
+  const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
+  const loadStart = source.indexOf("const loadList = React.useCallback");
+  const loadEnd = source.indexOf("\n    const loadDetail", loadStart);
+  assert.ok(loadStart >= 0, "list loader is present");
+  assert.ok(loadEnd > loadStart, "list loader has a bounded body");
+  const loadList = source.slice(loadStart, loadEnd);
+  assert.match(loadList, /listPageEndCursor\.current/u);
+  assert.doesNotMatch(loadList, /state\.listPage\.endCursor/u);
+  assert.doesNotMatch(loadList, /\}, \[send,[^\]]*listPage/u);
+  const effectStart = source.indexOf("React.useEffect(() => {\n      if (featureEnabled !== true || !state.host || state.capabilities.status === \"loading\")");
+  const effectEnd = source.indexOf("\n\n    const style", effectStart);
+  assert.ok(effectStart >= 0, "initial list effect is present");
+  assert.ok(effectEnd > effectStart, "initial list effect has a bounded body");
+  assert.match(source.slice(effectStart, effectEnd), /loadList\(false\)/u);
+});
+
 test("renderer includes detail partial/rate-limit context and safe host-derived links", () => {
   const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
   for (const marker of ["stateReason", "previousTitle", "currentTitle", "fromRepository", "toRepository", "rateLimitText", "repositoryUrl", "userUrl", "commitUrl", "state.detail.status === \\\"partial\\\""]) {
@@ -839,16 +944,22 @@ test("review follow-up preserves rate-limit cost, row structure, cancellation br
   const source = fs.readFileSync(path.join(featureDir, "renderer.mjs"), "utf8");
   assert.match(source, /rateLimit\.cost/);
   assert.match(source, /parts\.push\(`cost \$\{rateLimit\.cost\}/);
-  assert.match(source, /function ListRow[\s\S]*?role: "group"[\s\S]*?repoLink/);
+  assert.match(source, /function ListRow[\s\S]*?github-issues-route-issue-row[\s\S]*?borderRadius: "8px"/);
+  assert.match(source, /function ListRow[\s\S]*?borderLeft: selected \? "3px solid/);
   assert.match(source, /function ListRow[\s\S]*?node\(React, "button"[\s\S]*?onClick: onSelect/);
   assert.match(source, /node\(React, "button"[\s\S]*?\),\s*node\(React, "div"[\s\S]*?authorUrl/);
+  const listRowSource = source.slice(source.indexOf("function ListRow"), source.indexOf("function TimelineEvent"));
+  assert.match(listRowSource, /aria-label": `Issue #\$\{display\(issue\.number\)\}: \$\{display\(issue\.title\)\}`/);
+  assert.match(listRowSource, /fontSize: "15px", fontWeight: 700/);
+  assert.doesNotMatch(listRowSource, /display\(issue\.repository\)/);
   assert.equal((source.match(/dispatch\(\{ \.\.\.startAction, requestId, \.\.\.extra \}\)/g) ?? []).length, 1);
   const loadDetail = source.slice(source.indexOf("const loadDetail"), source.indexOf("const loadTimeline"));
   assert.match(loadDetail, /cancelPending\("timeline"\)[\s\S]*?const requestId/);
   assert.match(source, /cancelPending\("list"\)[\s\S]*?cancelPending\("detail"\)[\s\S]*?cancelPending\("timeline"\)/);
   assert.match(source, /mounted\.current[\s\S]*?Promise\.resolve\(\)\.then\(\(\) => \{[\s\S]*?request\(/);
-  assert.match(source, /children: issue\.body/);
-  assert.match(source, /children: item\.body/);
+  assert.match(source, /renderMarkdown\(React, Markdown, issue\.body, account\)/);
+  assert.match(source, /renderMarkdown\(React, Markdown, item\.body, account\)/);
+  assert.match(source, /allowBasicHtml: true/);
   assert.match(source, /bridgeResponseStatus\(response, requestId\)/);
   assert.match(source, /status !== "current"[\s\S]*?invalid-response/);
   assert.match(source, /label\?\.color/);
@@ -858,6 +969,11 @@ test("review follow-up preserves rate-limit cost, row structure, cancellation br
   assert.match(source, /listDebounce\.current/);
   assert.match(source, /Promise\.resolve\(request\?\.\([\s\S]*?\.catch\(\(\) => \{\}\)/);
   assert.match(source, /active authenticated host/);
+  assert.match(source, /aria-expanded/);
+  assert.match(source, /toggleIssue/);
+  assert.match(source, /github-issues-route-inline-detail/);
+  assert.match(source, /repository: state\.repository\.trim\(\)/);
+  assert.match(source, /root\s*\}/);
 });
 
 test("renderer distinguishes stale responses from malformed current envelopes", async () => {

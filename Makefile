@@ -66,7 +66,7 @@ if [ -z "$$format" ]; then \
 fi; \
 printf '%s\n' "$$format"
 
-.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream inspect-upstream-intel inspect-upstream-intel-devcontainer build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
+.PHONY: help check test build-updater maybe-build-updater update rebuild rebuild-install inspect-upstream inspect-upstream-intel inspect-upstream-intel-devcontainer build-app build-app-fresh setup-native bootstrap-native install-native update-native rebuild-next run-app build-dev-app run-dev-app dev-install dev-run dev-status dev-uninstall issues-preview deb rpm pacman appimage package install service-enable service-status clean-dist clean-state
 
 help:
 	@printf '\nChatGPT Desktop for Linux Make Targets\n\n'
@@ -89,6 +89,11 @@ help:
 	@printf '  %-18s %s\n' "make run-app" "Launch the local generated Electron app from codex-app/"
 	@printf '  %-18s %s\n' "make build-dev-app" "Build a side-by-side test app with a distinct app id/bin"
 	@printf '  %-18s %s\n' "make run-dev-app" "Launch the side-by-side test app"
+	@printf '  %-18s %s\n' "make dev-install" "Build/install an isolated user-local development app"
+	@printf '  %-18s %s\n' "make dev-run" "Launch the isolated development app"
+	@printf '  %-18s %s\n' "make dev-status" "Show isolated development app paths/state"
+	@printf '  %-18s %s\n' "make dev-uninstall" "Remove the isolated development installation"
+	@printf '  %-18s %s\n' "make issues-preview" "Serve the GitHub Issues UI fixture preview"
 	@printf '  %-18s %s\n' "make deb" "Build the Debian package into dist/"
 	@printf '  %-18s %s\n' "make rpm" "Build the RPM package into dist/ (Fedora/openSUSE)"
 	@printf '  %-18s %s\n' "make pacman" "Build the pacman package into dist/ (Arch)"
@@ -109,6 +114,11 @@ help:
 	@printf '  %-18s %s\n' "REBUILD_REPORT_DIR=..." "Override inspect/rebuild report output directory"
 	@printf '  %-18s %s\n' "DEV_APP_ID=..." "Override side-by-side test app id/bin (default: codex-cua-lab)"
 	@printf '  %-18s %s\n' "DEV_APP_NAME=..." "Override side-by-side test app display name"
+	@printf '  %-18s %s\n' "DEV_PROFILE_APP_ID=..." "Development app identity (default: codex-desktop-dev)"
+	@printf '  %-18s %s\n' "DEV_PROFILE_APP_NAME=..." "Development app display name"
+	@printf '  %-18s %s\n' "DEV_PROFILE_FEATURES=..." "Features enabled in the dev install (default: github-issues-tab)"
+	@printf '  %-18s %s\n' "DEV_PROFILE_ROOT=..." "User-local dev install root (default: ~/.local/opt/codex-desktop-dev)"
+	@printf '  %-18s %s\n' "DEV_PROFILE_WEBVIEW_PORT=..." "Development webview port (default: 5190)"
 	@printf '  %-18s %s\n' "PACKAGE_VERSION=..." "Override the package version for make deb / make rpm / make pacman / make appimage"
 	@printf '  %-18s %s\n' "PACKAGE_WITH_UPDATER=0" "Build packages without codex-update-manager or the updater service"
 	@printf '  %-18s %s\n' "CODEX_CLI_BUNDLE_SOURCE=..." "Embed an installed Codex CLI package in a local AppImage"
@@ -139,6 +149,8 @@ help:
 	@printf '  %s\n' "make run-app"
 	@printf '  %s\n' "make build-dev-app"
 	@printf '  %s\n' "./bin/codex-cua-lab"
+	@printf '  %s\n' "make dev-install"
+	@printf '  %s\n' "make dev-run"
 	@printf '  %s\n' "make deb PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "make rpm PACKAGE_VERSION=2026.03.24.220723+88f07cd3"
 	@printf '  %s\n' "MAX_BUILD_THREADS=8 make install-native"
@@ -272,6 +284,50 @@ build-dev-app:
 run-dev-app:
 	@echo "[make] Launching side-by-side Electron app"
 	"$(DEV_APP_BIN)"
+
+dev-install:
+	@echo "[make] Installing isolated development app"
+	CODEX_DEV_APP_ID="$(or $(DEV_PROFILE_APP_ID),codex-desktop-dev)" \
+	CODEX_DEV_APP_NAME="$(or $(DEV_PROFILE_APP_NAME),ChatGPT Desktop (Dev))" \
+	CODEX_DEV_INSTALL_ROOT="$(or $(DEV_PROFILE_ROOT),$(HOME)/.local/opt/codex-desktop-dev)" \
+	CODEX_DEV_FEATURES="$(DEV_PROFILE_FEATURES)" \
+	CODEX_DEV_RESET_FEATURES="$(if $(strip $(DEV_PROFILE_FEATURES)),1,0)" \
+	CODEX_DEV_WEBVIEW_PORT="$(or $(DEV_PROFILE_WEBVIEW_PORT),5190)" \
+		bash scripts/dev/codex-desktop-dev.sh install $(if $(strip $(DMG)),"$(DMG)")
+
+dev-run:
+	@echo "[make] Launching isolated development app"
+	CODEX_DEV_APP_ID="$(or $(DEV_PROFILE_APP_ID),codex-desktop-dev)" \
+	CODEX_DEV_APP_NAME="$(or $(DEV_PROFILE_APP_NAME),ChatGPT Desktop (Dev))" \
+	CODEX_DEV_INSTALL_ROOT="$(or $(DEV_PROFILE_ROOT),$(HOME)/.local/opt/codex-desktop-dev)" \
+	CODEX_DEV_FEATURES="$(DEV_PROFILE_FEATURES)" \
+	CODEX_DEV_RESET_FEATURES="$(if $(strip $(DEV_PROFILE_FEATURES)),1,0)" \
+	CODEX_DEV_WEBVIEW_PORT="$(or $(DEV_PROFILE_WEBVIEW_PORT),5190)" \
+		bash scripts/dev/codex-desktop-dev.sh run
+
+dev-status:
+	CODEX_DEV_APP_ID="$(or $(DEV_PROFILE_APP_ID),codex-desktop-dev)" \
+	CODEX_DEV_APP_NAME="$(or $(DEV_PROFILE_APP_NAME),ChatGPT Desktop (Dev))" \
+	CODEX_DEV_INSTALL_ROOT="$(or $(DEV_PROFILE_ROOT),$(HOME)/.local/opt/codex-desktop-dev)" \
+	CODEX_DEV_FEATURES="$(DEV_PROFILE_FEATURES)" \
+	CODEX_DEV_RESET_FEATURES="$(if $(strip $(DEV_PROFILE_FEATURES)),1,0)" \
+	CODEX_DEV_WEBVIEW_PORT="$(or $(DEV_PROFILE_WEBVIEW_PORT),5190)" \
+		bash scripts/dev/codex-desktop-dev.sh status
+
+dev-uninstall:
+	@echo "[make] Removing isolated development installation"
+	CODEX_DEV_APP_ID="$(or $(DEV_PROFILE_APP_ID),codex-desktop-dev)" \
+	CODEX_DEV_APP_NAME="$(or $(DEV_PROFILE_APP_NAME),ChatGPT Desktop (Dev))" \
+	CODEX_DEV_INSTALL_ROOT="$(or $(DEV_PROFILE_ROOT),$(HOME)/.local/opt/codex-desktop-dev)" \
+	CODEX_DEV_FEATURES="$(DEV_PROFILE_FEATURES)" \
+	CODEX_DEV_RESET_FEATURES="$(if $(strip $(DEV_PROFILE_FEATURES)),1,0)" \
+	CODEX_DEV_WEBVIEW_PORT="$(or $(DEV_PROFILE_WEBVIEW_PORT),5190)" \
+		bash scripts/dev/codex-desktop-dev.sh uninstall
+
+issues-preview:
+	@echo "[make] Serving GitHub Issues UI fixture preview"
+	CODEX_ISSUES_PREVIEW_PORT="$(or $(ISSUES_PREVIEW_PORT),4173)" \
+		bash scripts/dev/github-issues-preview.sh run
 
 deb: maybe-build-updater
 	@echo "[make] Building Debian package"

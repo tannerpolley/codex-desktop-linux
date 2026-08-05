@@ -238,6 +238,7 @@ run_core_job() {
     bash -n scripts/build-appimage.sh
     bash -n scripts/ci-local.sh
     bash -n scripts/ci/*.sh
+    bash -n scripts/dev/*.sh
 
     cargo fmt --check
     cargo clippy --workspace --all-targets -- -D warnings
@@ -247,6 +248,7 @@ run_core_job() {
     bash scripts/ci/run-node-checks.sh
 
     bash tests/scripts_smoke.sh
+    bash tests/dev-install_smoke.sh
 
     append_summary "Rust and Smoke Tests" \
         "Shell syntax checks passed." \

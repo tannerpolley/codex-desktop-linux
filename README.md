@@ -309,6 +309,21 @@ make build-app-fresh
 make run-app
 ```
 
+For an isolated development build that can run beside the stable app:
+
+~~~bash
+make dev-install
+make dev-run
+~~~
+
+This installs ChatGPT Desktop (Dev) under ~/.local/opt/codex-desktop-dev with
+its own app identity, state, cache, Codex home, webview port, and desktop entry. The local
+GitHub Issues feature is enabled there by default; the stable install and the
+repository's committed feature defaults are unchanged. The dev Codex home is
+separate by default, so its project list and local Codex state do not use the
+stable installation. Set CODEX_DEV_SHARE_CODEX_HOME=1 only when deliberately
+sharing that state.
+
 Use a local DMG:
 
 ```bash

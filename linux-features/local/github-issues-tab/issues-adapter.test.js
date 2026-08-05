@@ -14,6 +14,7 @@ const timelinePage2Fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fi
 const timelinePartialFixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "timeline-partial.json"), "utf8"));
 const {
   buildSearchQuery,
+  parseRepositoryRemote,
   normalizeIssue,
   normalizeTimelineItem,
   getIssue,
@@ -26,10 +27,21 @@ const VERSION = { stdout: "gh version 2.81.0 (2026-07-17)\ngithub.com/cli/cli v2
 const AUTH = { stdout: JSON.stringify({ hosts: { "github.com": [{ host: "github.com", userLogin: "octocat", active: true, state: "success" }] } }) };
 const byType = Object.fromEntries(detailFixture.data.node.timelineItems.nodes.map((node) => [node.__typename, node]));
 
-test("buildSearchQuery creates account-scoped inbox searches", () => {
+test("buildSearchQuery scopes account views and repository-wide All views correctly", () => {
   assert.equal(buildSearchQuery({ view: "assigned", state: "open", repository: null, text: "" }, "octocat"), "is:issue assignee:octocat is:open sort:updated-desc");
   assert.equal(buildSearchQuery({ view: "authored", state: "closed", repository: "openai/codex", text: "race" }, "octocat"), "is:issue author:octocat is:closed repo:openai/codex race sort:updated-desc");
   assert.equal(buildSearchQuery({ view: "all", state: "all", repository: null, text: "" }, "octocat"), "is:issue involves:octocat sort:updated-desc");
+  assert.equal(buildSearchQuery({ view: "all", state: "open", repository: "cli/cli", text: "" }, "octocat"), "is:issue is:open repo:cli/cli sort:updated-desc");
+});
+
+test("parseRepositoryRemote accepts GitHub HTTPS and SSH origins", () => {
+  assert.deepEqual(parseRepositoryRemote("https://github.com/openai/codex.git"), { host: "github.com", repository: "openai/codex" });
+  assert.deepEqual(parseRepositoryRemote("git@github.com:openai/codex.git"), { host: "github.com", repository: "openai/codex" });
+  assert.deepEqual(parseRepositoryRemote("ssh://git@ghe.example.com/openai/codex"), { host: "ghe.example.com", repository: "openai/codex" });
+  assert.deepEqual(parseRepositoryRemote("https://gitlab.com/openai/codex.git"), { host: "gitlab.com", repository: "openai/codex" });
+  for (const remote of ["", "https://github.com/openai/codex/extra.git", "not-a-remote"]) {
+    assert.equal(parseRepositoryRemote(remote), null);
+  }
 });
 
 test("normalizeIssue removes GraphQL shape from renderer data", () => {
@@ -157,6 +169,7 @@ test("runOperation resolves the active host and returns capabilities", async () 
   assert.deepEqual(data, {
     host: "github.com",
     viewerLogin: "octocat",
+    repository: null,
     rateLimit: { cost: 1, remaining: 4999, resetAt: "2026-07-17T18:00:00Z" },
   });
   assert.equal(calls[0].command, "gh");
@@ -167,10 +180,27 @@ test("runOperation resolves the active host and returns capabilities", async () 
   assert.equal(JSON.parse(calls[2].stdin).query, QUERIES.capabilities);
 });
 
+test("capabilities resolves the workspace origin before querying GitHub", async () => {
+  const calls = [];
+  const data = await runOperation({ version: 1, requestId: "cap-root", operation: "capabilities", input: { host: null, root: "/workspaces/codex" } }, {
+    spawn: fakeSpawn([
+      VERSION,
+      AUTH,
+      { stdout: "git@github.com:openai/codex.git\n" },
+      { stdout: JSON.stringify(capabilitiesFixture) },
+    ], calls),
+    ghPath: "gh",
+  });
+  assert.equal(data.repository, "openai/codex");
+  assert.equal(calls[2].command, "git");
+  assert.deepEqual(calls[2].args, ["-C", "/workspaces/codex", "config", "--get", "remote.origin.url"]);
+  assert.equal(calls[3].command, "gh");
+});
+
 test("runOperation lists, deduplicates, preserves partial data, and never shells text", async () => {
   const calls = [];
   const literal = "$(touch nope); \"quoted\"";
-  const result = await runOperation({ version: 1, requestId: "list", operation: "listIssues", input: { host: "github.com", view: "assigned", state: "open", repository: null, text: literal, cursor: "cursor-1" } }, {
+  const result = await runOperation({ version: 1, requestId: "list", operation: "listIssues", input: { host: "github.com", view: "assigned", state: "open", repository: "openai/codex", text: literal, cursor: "cursor-1" } }, {
     spawn: fakeSpawn([
       VERSION,
       AUTH,
@@ -314,7 +344,7 @@ test("retains usable issues when GraphQL pageInfo is null", async () => {
   partialPage.data.search.pageInfo = null;
   partialPage.errors = [{ type: "FIELD_ERROR", path: ["search", "pageInfo"] }];
   const calls = [];
-  const result = await runOperation({ version: 1, requestId: "partial-page", operation: "listIssues", input: { host: "github.com", view: "assigned", state: "open", repository: null, text: "", cursor: null } }, {
+  const result = await runOperation({ version: 1, requestId: "partial-page", operation: "listIssues", input: { host: "github.com", view: "assigned", state: "open", repository: "openai/codex", text: "", cursor: null } }, {
     spawn: fakeSpawn([VERSION, AUTH, { stdout: JSON.stringify(capabilitiesFixture) }, { stdout: JSON.stringify(partialPage) }], calls),
     ghPath: "gh",
   });

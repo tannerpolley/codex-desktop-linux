@@ -6538,6 +6538,7 @@ test("renders the generated Linux desktop settings page with working switches", 
     assert.ok(text.includes("System tray"));
     assert.ok(text.includes("Warm start"));
     assert.ok(text.includes("Keep questions open"));
+    assert.ok(text.includes("GitHub Issues"));
     assert.ok(text.includes("Install updates when you close ChatGPT"));
     assert.match(
       fs.readFileSync(path.join(assetsDir, linuxDesktopSettingsAsset), "utf8"),
@@ -6547,7 +6548,7 @@ test("renders the generated Linux desktop settings page with working switches", 
     const switches = rendered.filter(
       (value) => typeof value === "object" && value.type === "button" && value.props.role === "switch",
     );
-    assert.equal(switches.length, 5);
+    assert.equal(switches.length, 6);
     assert.deepEqual(
       switches.map((element) => element.props["aria-label"]),
       [
@@ -6555,6 +6556,7 @@ test("renders the generated Linux desktop settings page with working switches", 
         "System tray",
         "Keep questions open",
         "Warm start",
+        "GitHub Issues",
         "Install updates when you close ChatGPT",
       ],
     );
@@ -8289,7 +8291,7 @@ test("materializes trusted Linux bundled plugins through a private staging root"
     applyLinuxBundledPluginCopyPermissionsPatch,
     currentBundledPluginCopyBundleFixture(),
   );
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-bundled-plugin-permissions-"));
+  const root = fs.mkdtempSync(path.join("/tmp", "codex-bundled-plugin-permissions-"));
   const sourcePlugin = path.join(root, "source-plugin");
   const sourceManifestDir = path.join(sourcePlugin, ".codex-plugin");
   const sourceManifest = path.join(sourceManifestDir, "plugin.json");
@@ -8308,7 +8310,7 @@ test("materializes trusted Linux bundled plugins through a private staging root"
       "process",
       "require",
       `${patched};return Ac;`,
-    )({ ...process, platform: "linux" }, require);
+    )({ ...process, platform: "linux", geteuid: process.geteuid.bind(process) }, require);
     const stagingRoot = await materializePlugin({ sourcePlugin, targetMarketplaceRoot });
     const targetPlugin = path.join(stagingRoot, "plugins", "chrome");
     const targetManifest = path.join(targetPlugin, ".codex-plugin", "plugin.json");

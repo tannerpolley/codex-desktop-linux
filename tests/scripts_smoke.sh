@@ -163,7 +163,7 @@ JSON
 {"name":"browser","version":"0.1.0-alpha2","interface":{"category":"Engineering"}}
 JSON
     cat > "$resources_dir/plugins/openai-bundled/plugins/browser/scripts/browser-client.mjs" <<'JS'
-import{env as Ub}from"node:process";function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}function Me(){let e=globalThis.nodeRepl;return e?.config==null?void 0:e}function th(){let e=import.meta.__codexNativePipe;return e==null||typeof e.createConnection!="function"?null:e}var I2=new Set(["about:blank"]);function Gb(e){if(I2.has(e))return!0;let t;try{t=new URL(e)}catch{return!1}return t.protocol==="http:"||t.protocol==="https:"}class Uf{async fetchBlocked(e,t){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`${t} cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}}var kE=t=>t==="win32"?"\\\\.\\pipe\\codex-browser-use":"/tmp/codex-browser-use";var Cb=kE(hV.platform()),EV=()=>_P()==="win32"?TV():CV(),CV=async()=>(await yP(Cb)).map(e=>wP.resolve(Cb,e)),TV=async()=>[];export function setupAtlasRuntime() {return Ub.XDG_CONFIG_HOME}
+import{env as Ub}from"node:process";var Es="BROWSER_USE_SECURITY_MODE",Bl="BROWSER_USE_AUTOMATED_SAFETY_PRECHECKS_ENABLED";function sT(e){if(Ai!=null)return()=>{};let t=Object.freeze({nodeRepl:e,createElicitation:e.createElicitation,env:e.env,securityMode:e.env[Es],enabled:e.env[Bl]==="1"});return Ai=t,()=>{Ai===t&&(Ai=void 0)}}function Ii(){return Ai}function Bm(){let e=Ai;if(e==null)return!0;let t=ye();return t===e.nodeRepl&&t.env===e.env&&t.createElicitation===e.createElicitation&&t.env[Es]===e.securityMode&&t.env[Bl]==="1"===e.enabled}function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}function Me(){let e=globalThis.nodeRepl;return e?.config==null?void 0:e}function th(){let e=import.meta.__codexNativePipe;return e==null||typeof e.createConnection!="function"?null:e}var I2=new Set(["about:blank"]);function Gb(e){if(I2.has(e))return!0;let t;try{t=new URL(e)}catch{return!1}return t.protocol==="http:"||t.protocol==="https:"}class Uf{async fetchBlocked(e,t){let r=await bS(e.endpoint,{method:"GET"});if(!r.ok)throw new Error(ae(`${t} cannot determine if ${e.displayUrl} is allowed. Please try again later or use another source.`));let n=await r.json();return TF(n)}}var kE=t=>t==="win32"?"\\\\.\\pipe\\codex-browser-use":"/tmp/codex-browser-use";var Cb=kE(hV.platform()),EV=()=>_P()==="win32"?TV():CV(),CV=async()=>(await yP(Cb)).map(e=>wP.resolve(Cb,e)),TV=async()=>[];export function setupAtlasRuntime() {return Ub.XDG_CONFIG_HOME}
 JS
 }
 
@@ -7780,6 +7780,14 @@ test_browser_plugin_renamed_upstream_staging() {
     assert_not_contains "$browser_dir/scripts/browser-client.mjs" '"node:process"'
     assert_contains "$browser_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env?.\[e\]'
     assert_not_contains "$browser_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env\[e\]'
+    assert_contains "$browser_dir/scripts/browser-client.mjs" 'securityMode:e.env?.\[Es\]'
+    assert_contains "$browser_dir/scripts/browser-client.mjs" 'enabled:e.env?.\[Bl\]==="1"'
+    assert_contains "$browser_dir/scripts/browser-client.mjs" 't.env?.\[Es\]===e.securityMode'
+    assert_contains "$browser_dir/scripts/browser-client.mjs" 't.env?.\[Bl\]==="1"===e.enabled'
+    assert_not_contains "$browser_dir/scripts/browser-client.mjs" 'e.env\[Es\]'
+    assert_not_contains "$browser_dir/scripts/browser-client.mjs" 'e.env\[Bl\]'
+    assert_not_contains "$browser_dir/scripts/browser-client.mjs" 't.env\[Es\]'
+    assert_not_contains "$browser_dir/scripts/browser-client.mjs" 't.env\[Bl\]'
     assert_contains "$browser_dir/scripts/browser-client.mjs" "codexLinuxBrowserUseDefineNodeReplMethod"
     assert_contains "$browser_dir/scripts/browser-client.mjs" "addAfterSubmittedCodeHook"
     assert_contains "$browser_dir/scripts/browser-client.mjs" "nativePipe??import.meta.__codexNativePipe"
@@ -8438,7 +8446,7 @@ MD
 {"extensionId":"hehggadaopoacecdllhhajmbjkdcmajg","extensionHostName":"com.openai.codexextension"}
 JSON
     cat > "$chrome_dir/scripts/browser-client.mjs" <<'JS'
-const browserPreference={};function preferredWindowIdFor(){}function getForUrl(){}const extensionInstanceId=null;
+const browserPreference={};function preferredWindowIdFor(){}function getForUrl(){}const extensionInstanceId=null;var Es="BROWSER_USE_SECURITY_MODE",Bl="BROWSER_USE_AUTOMATED_SAFETY_PRECHECKS_ENABLED";function sT(e){if(Ai!=null)return()=>{};let t=Object.freeze({nodeRepl:e,createElicitation:e.createElicitation,env:e.env,securityMode:e.env[Es],enabled:e.env[Bl]==="1"});return Ai=t,()=>{Ai===t&&(Ai=void 0)}}function Ii(){return Ai}function Bm(){let e=Ai;if(e==null)return!0;let t=ye();return t===e.nodeRepl&&t.env===e.env&&t.createElicitation===e.createElicitation&&t.env[Es]===e.securityMode&&t.env[Bl]==="1"===e.enabled}
 var kE=t=>t==="win32"?"\\\\.\\pipe\\codex-browser-use":"/tmp/codex-browser-use";var Cb=kE(hV.platform()),EV=()=>_P()==="win32"?TV():CV(),CV=async()=>(await yP(Cb)).map(e=>wP.resolve(Cb,e)),TV=async()=>[];
 function lu(e){let t=globalThis.nodeRepl?.env[e];return typeof t=="string"?t:void 0}
 function Me(){let e=globalThis.nodeRepl;return e?.config==null?void 0:e}
@@ -8627,6 +8635,14 @@ test_chrome_plugin_staging() {
     assert_not_contains "$chrome_dir/scripts/browser-client.mjs" '"node:process"'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env?.\[e\]'
     assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 'globalThis.nodeRepl?.env\[e\]'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" 'securityMode:e.env?.\[Es\]'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" 'enabled:e.env?.\[Bl\]==="1"'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" 't.env?.\[Es\]===e.securityMode'
+    assert_contains "$chrome_dir/scripts/browser-client.mjs" 't.env?.\[Bl\]==="1"===e.enabled'
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 'e.env\[Es\]'
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 'e.env\[Bl\]'
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 't.env\[Es\]'
+    assert_not_contains "$chrome_dir/scripts/browser-client.mjs" 't.env\[Bl\]'
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "codexLinuxBrowserUseConfigShim"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "writeValue: codexLinuxBrowserUseIgnoreConfigWrite"
     assert_contains "$chrome_dir/scripts/browser-client.mjs" "batchWrite: codexLinuxBrowserUseIgnoreConfigWrite"

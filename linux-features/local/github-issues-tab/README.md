@@ -27,11 +27,29 @@ Run the focused contract tests with:
 node --test linux-features/local/github-issues-tab/test.js
 ```
 
-When later implementation files are present, run their focused tests too:
+Run the adapter contract tests too:
 
 ```bash
 node --test linux-features/local/github-issues-tab/issues-adapter.test.js
 ```
+
+For UI work without launching Electron, serve the browser-only fixture preview:
+
+```bash
+make issues-preview
+```
+
+Open `http://127.0.0.1:4173/preview/` in the in-app browser. It reuses the
+production Issues renderer with four local issues and mock capabilities, detail,
+and timeline responses; it never calls GitHub or requires authentication. The
+preview fixture is pinned to `cli/cli`; the installed feature instead uses the
+GitHub repository resolved from the workspace origin remote.
+
+When the feature is enabled, Settings → Linux desktop exposes a **GitHub
+Issues** toggle. It defaults on and is persisted as
+`codex-linux-github-issues-enabled`; turn it off to stop the Issues view from
+making requests while leaving the rest of the app usable. An already-open
+Issues panel shows that it is disabled until the setting is turned back on.
 
 To disable the prototype, remove `github-issues-tab` from the ignored
 `linux-features/features.json` list (or set `{"enabled":[]}`), then rebuild

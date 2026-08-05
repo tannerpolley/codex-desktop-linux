@@ -41,6 +41,7 @@ jobs:
           bash -n scripts/build-appimage.sh
           bash -n scripts/ci/update-nix-hashes.sh
           bash -n scripts/ci/validate-nix-pins.sh
+          bash -n scripts/dev/*.sh
 
       - name: Check Node syntax and tests
         timeout-minutes: 10
@@ -64,6 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/scripts_smoke.sh
+          bash tests/dev-install_smoke.sh
           {
             echo "## Rust and Smoke Tests"
             echo ""

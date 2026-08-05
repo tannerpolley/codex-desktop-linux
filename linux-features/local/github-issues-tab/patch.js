@@ -6,6 +6,8 @@ const {
   applyMainBridgePatch,
   applyPreloadBridgePatch,
 } = require("./bridge-source.js");
+const { findCodexRequestWebviewAsset } = require("../../../scripts/patches/lib/assets.js");
+const { linuxSettingsKeys } = require("../../../scripts/patches/lib/settings-keys.js");
 
 function walkJavaScriptFiles(root) {
   if (!fs.existsSync(root)) return [];
@@ -68,6 +70,7 @@ function optionalDriftStatus(result, warnings) {
 const ISSUES_ROUTE_MARKER = "codexLinuxGithubIssuesRouteMarker";
 const ISSUES_ENVIRONMENT_MARKER = "codexLinuxGithubIssuesEnvironmentAction";
 const ISSUES_SIDE_PANEL_MARKER = "codexLinuxGithubOpenIssuesSidePanel";
+const ISSUES_SIDE_PANEL_COMPONENT_MARKER = "codexLinuxGithubIssuesPanelComponent";
 
 function readWebviewAssets(extractedDir) {
   const assetsDir = path.join(extractedDir, "webview", "assets");
@@ -97,6 +100,45 @@ function findOne(entries, predicate, description) {
     };
   }
   return { entry: matches[0] };
+}
+
+function captureCurrentMarkdownRenderer(entries) {
+  const candidates = [];
+  for (const entry of entries) {
+    const descriptionIndex = entry.source.indexOf("pullRequestDetail.description.title");
+    if (descriptionIndex === -1) continue;
+    const renderMatch = entry.source.slice(descriptionIndex).match(/\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{account:[\s\S]*?allowBasicHtml:!0[\s\S]*?children:i\}\)/u);
+    if (renderMatch == null) continue;
+    const localName = renderMatch[2];
+    const localPattern = new RegExp(`(?:^|,)\\s*([A-Za-z_$][\\w$]*)\\s+as\\s+${localName}(?=,|$)`, "u");
+    for (const importMatch of entry.source.matchAll(/import\{([^}]*)\}from"\.\/([^"']+\.js)"/gu)) {
+      if (!importMatch[2].startsWith("pull-request-code-review-state-")) continue;
+      const imported = importMatch[1].match(localPattern);
+      if (imported != null) candidates.push({ assetName: importMatch[2], exportedName: imported[1] });
+    }
+  }
+  const unique = [...new Map(candidates.map((candidate) => [`${candidate.assetName}:${candidate.exportedName}`, candidate])).values()];
+  return unique.length === 1 ? unique[0] : null;
+}
+
+function markdownRendererExpression(entries) {
+  const renderer = captureCurrentMarkdownRenderer(entries);
+  return renderer == null ? "null" : `(await import(${JSON.stringify(`/assets/${renderer.assetName}`)})).${renderer.exportedName}`;
+}
+
+function githubIssuesSettingProp(extractedDir) {
+  try {
+    const { assetName, exportName } = findCodexRequestWebviewAsset(
+      path.join(extractedDir, "webview", "assets"),
+    );
+    const request = `(await import(${JSON.stringify(`/assets/${assetName}`)})).${exportName}`;
+    return `,getSetting:key=>${request}("get-global-state",{params:{key:${JSON.stringify(linuxSettingsKeys.githubIssues)}}})`;
+  } catch {
+    // The Issues feature is optional. If an upstream request asset is not
+    // discoverable, keep the existing feature usable and let the renderer's
+    // default-on behavior preserve compatibility with that build.
+    return "";
+  }
 }
 
 function captureRouteShape(source) {
@@ -186,17 +228,25 @@ function patchIssuesRouteAssets(extractedDir) {
 
   const markerExpression = `const ${ISSUES_ROUTE_MARKER}=true;`;
   const routeVariable = "codexLinuxGithubIssuesRoute";
-  const routeAssignment = `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const issuesModule=await import(\`/github-issues-tab.mjs\`);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:null,openExternal})})`;
+  const markdown = markdownRendererExpression(entries);
+  const settingsProp = githubIssuesSettingProp(extractedDir);
+  const routeAssignment = `${routeVariable}=${routeShape.lazyWrapper}(async()=>{const issuesModule=await import(\`/github-issues-tab.mjs\`);const openExternal=url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}};return issuesModule.createIssuesRoute({React:${routeShape.react},components:{},Markdown:${markdown},openExternal${settingsProp}})})`;
   let routeBody = routeEntry.source;
   if (routeShape.variableInsertAt == null) {
     const independentInsertAt = routeShape.lazyInsertAt + (routeShape.expressionDelimiter === "," ? 1 : 0);
-    routeBody = `${routeBody.slice(0, independentInsertAt)}const ${routeAssignment};${routeBody.slice(independentInsertAt)}`;
+    const independentAssignment = routeShape.expressionDelimiter === ","
+      ? `${routeAssignment},`
+      : `const ${routeAssignment};`;
+    routeBody = `${routeBody.slice(0, independentInsertAt)}${independentAssignment}${routeBody.slice(independentInsertAt)}`;
   } else {
     routeBody = `${routeBody.slice(0, routeShape.variableInsertAt)}${routeVariable},${routeBody.slice(routeShape.variableInsertAt)}`;
     const adjustedLazyInsertAt = routeShape.lazyInsertAt + routeVariable.length + 1;
     routeBody = `${routeBody.slice(0, adjustedLazyInsertAt)}${routeShape.expressionDelimiter}${routeAssignment}${routeBody.slice(adjustedLazyInsertAt)}`;
   }
-  let routeSource = markerExpression + routeBody;
+  const routeDeclaration = routeShape.variableInsertAt == null && routeShape.expressionDelimiter === ","
+    ? `let ${routeVariable};`
+    : "";
+  let routeSource = markerExpression + routeDeclaration + routeBody;
   const patchedRouteMarkerIndex = routeSource.indexOf("path:`/pull-requests`", markerExpression.length);
   const patchedEntryStart = patchedRouteMarkerIndex - routeShape.entryPrefix.length;
   routeSource = routeSource.slice(0, patchedEntryStart) + `${routeShape.entryPrefix}path:\`/issues\`,element:(0,${routeShape.jsxAlias}.jsx)(codexLinuxGithubIssuesRoute,{})}),` + routeSource.slice(patchedEntryStart);
@@ -316,8 +366,53 @@ function patchIssuesSummaryAsset(source) {
   return tcResult.source;
 }
 
+function patchCurrentIssuesSummaryAsset(source) {
+  if (source.includes(ISSUES_ENVIRONMENT_MARKER)) return source;
+  if (!source.includes("function JC(")
+    || !source.includes("environmentSummary.title")
+    || !source.includes("sectionKey:F")
+    || !source.includes("children:[R,z,P,H,ee]")) return null;
+
+  const range = findFunctionRange(source, "JC");
+  if (range == null) return null;
+  const body = source.slice(range.start, range.end);
+  if (!body.includes("_=bt(pu),")) return null;
+
+  const icon = captureCurrentPullRequestIcon(source);
+  if (icon == null) return null;
+  const action = `${ISSUES_ENVIRONMENT_MARKER}=(0,ZC.jsx)(X.ItemButton,{onClick:()=>{${ISSUES_SIDE_PANEL_MARKER}(_,{root:a})},children:[(0,ZC.jsx)(X.ItemLeading,{children:(0,${icon.jsxAlias}.jsx)(${icon.componentAlias},{})}),(0,ZC.jsx)(X.ItemLabel,{children:\`Issues\`})]}),`;
+  const withAction = body.replace("_=bt(pu),", `_=bt(pu),${action}`);
+  if (withAction === body) return null;
+  const withIssueRow = withAction.replace("children:[R,z,P,H,ee]", `children:[R,z,P,H,ee,${ISSUES_ENVIRONMENT_MARKER}]`);
+  if (withIssueRow === withAction) return null;
+  return `${source.slice(0, range.start)}${withIssueRow}${source.slice(range.end)}`;
+}
+
+function captureCurrentPullRequestIcon(source) {
+  const match = source.match(/function FC\([\s\S]*?\(0,([A-Za-z_$][\w$]*)\.jsx\)\(X\.ItemLeading,\{children:\(0,\1\.jsx\)\(([A-Za-z_$][\w$]*),\{\}\)\}\)/u);
+  return match == null ? null : { jsxAlias: match[1], componentAlias: match[2] };
+}
+
 function patchIssuesSummaryAssets(extractedDir) {
   const { entries } = readWebviewAssets(extractedDir);
+  const currentResult = findOne(
+    entries,
+    ({ source }) => source.includes("function JC(")
+      && source.includes("environmentSummary.title")
+      && source.includes("sectionKey:F")
+      && (source.includes("children:[R,z,P,H,ee]")
+        || source.includes(ISSUES_ENVIRONMENT_MARKER)),
+    "current Environment summary assets",
+  );
+  if (!currentResult.error) {
+    const entry = currentResult.entry;
+    const patched = patchCurrentIssuesSummaryAsset(entry.source);
+    if (patched == null) return driftResult("current Environment summary callback anchors did not match");
+    if (patched === entry.source) return { matched: true, changed: 0 };
+    fs.writeFileSync(entry.filePath, patched, "utf8");
+    return { matched: true, changed: 1 };
+  }
+
   const result = findOne(
     entries,
     ({ source }) => source.includes("function TC(") && source.includes("function jC(") && source.includes("function MC(") && source.includes("sectionKey:`environment`"),
@@ -356,6 +451,30 @@ function patchCurrentIssuesCallbackChain(source) {
 
 function patchIssuesSidePanelAssets(extractedDir) {
   const { entries } = readWebviewAssets(extractedDir);
+
+  const currentResult = findOne(
+    entries,
+    ({ source }) => source.includes("function JC(")
+      && source.includes("function PT(")
+      && source.includes("dm.openTab("),
+    "current local conversation side-panel asset",
+  );
+  if (!currentResult.error) {
+    const current = currentResult.entry;
+    if (current.source.includes(ISSUES_SIDE_PANEL_COMPONENT_MARKER)) return { matched: true, changed: 0 };
+    const icon = captureCurrentPullRequestIcon(current.source);
+    if (icon == null) return driftResult("current Pull Request icon anchor did not match");
+    const markdown = markdownRendererExpression(entries);
+    const settingsProp = githubIssuesSettingProp(extractedDir);
+    const opener = `const ${ISSUES_SIDE_PANEL_COMPONENT_MARKER}=t(Sl(),1).lazy(()=>import(\`/github-issues-tab.mjs\`).then(async issuesModule=>({default:issuesModule.createIssuesSidePanel({React:t(Sl(),1),components:{},Markdown:${markdown},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}${settingsProp}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope,options={}){dm.openTab(scope,${ISSUES_SIDE_PANEL_COMPONENT_MARKER},{icon:(0,${icon.jsxAlias}.jsx)(${icon.componentAlias},{}),activate:!0,id:\`issues\`,props:options,title:\`Issues\`});return!0}`;
+    const anchor = "function JC(";
+    const anchorIndex = current.source.indexOf(anchor);
+    if (anchorIndex === -1) return driftResult("current local conversation side-panel registration anchor did not match");
+    const patched = `${current.source.slice(0, anchorIndex)}${opener}${current.source.slice(anchorIndex)}`;
+    fs.writeFileSync(current.filePath, patched, "utf8");
+    return { matched: true, changed: 1 };
+  }
+
   const result = findOne(
     entries,
     ({ source }) => source.includes("function Xl(e,{hostId:") && source.includes("pull-request:") && source.includes("openTab"),
@@ -382,7 +501,9 @@ function patchIssuesSidePanelAssets(extractedDir) {
   }
 
   let patched = `import codexLinuxGithubIssuesIcon from \"./${icon.name}\";${current.source}`;
-  const opener = `const codexLinuxGithubIssuesPanel=${reactAlias}.lazy(()=>import(\`/github-issues-tab.mjs\`).then(issuesModule=>({default:issuesModule.createIssuesSidePanel({React:${reactAlias},components:{},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope,{hostId}={}){const side=${locationAlias}(scope,\`issues\`)??\`right\`;${openTabsAlias}(side).openTab(scope,codexLinuxGithubIssuesPanel,{activate:!0,defaultState:()=>({}),icon:${reactAlias}.createElement(codexLinuxGithubIssuesIcon,{className:\`icon-xs shrink-0\`}),id:\`issues\`,props:{hostId},title:\`Issues\`,tooltip:\`Issues\`});${activateAlias}(scope,side);return!0}`;
+  const markdown = markdownRendererExpression(entries);
+  const settingsProp = githubIssuesSettingProp(extractedDir);
+  const opener = `const codexLinuxGithubIssuesPanel=${reactAlias}.lazy(()=>import(\`/github-issues-tab.mjs\`).then(async issuesModule=>({default:issuesModule.createIssuesSidePanel({React:${reactAlias},components:{},Markdown:${markdown},openExternal:url=>{try{void Promise.resolve(window.electronBridge?.openExternal?.(url)).catch(()=>{})}catch{}}${settingsProp}})})));function ${ISSUES_SIDE_PANEL_MARKER}(scope,options={}){const side=${locationAlias}(scope,\`issues\`)??\`right\`;${openTabsAlias}(side).openTab(scope,codexLinuxGithubIssuesPanel,{activate:!0,defaultState:()=>({}),icon:${reactAlias}.createElement(codexLinuxGithubIssuesIcon,{className:\`icon-xs shrink-0\`}),id:\`issues\`,props:options,title:\`Issues\`,tooltip:\`Issues\`});${activateAlias}(scope,side);return!0}`;
   const xlIndex = patched.indexOf("function Xl(");
   patched = `${patched.slice(0, xlIndex)}${opener}${patched.slice(xlIndex)}`;
   const rootResult = patchFunctionBody(patched, "$u", (body) => {
@@ -469,4 +590,5 @@ module.exports = {
   ISSUES_ROUTE_MARKER,
   ISSUES_ENVIRONMENT_MARKER,
   ISSUES_SIDE_PANEL_MARKER,
+  ISSUES_SIDE_PANEL_COMPONENT_MARKER,
 };

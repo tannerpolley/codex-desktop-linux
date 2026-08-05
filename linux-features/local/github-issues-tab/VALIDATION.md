@@ -1,14 +1,18 @@
 # GitHub Issues tab validation
 
-Validated against upstream ChatGPT Desktop `26.707.62119` / Electron `42.1.0`
+The feature-enabled build record below was validated against upstream ChatGPT Desktop `26.707.62119` / Electron `42.1.0`
 from `Codex.dmg` SHA-256
 `c243c94f8de6a51f5530ffe1f8d0c1588733d890ac692e34aaca06d95ba637ca`.
+It is retained as feature-enabled provenance; the current source checks are
+listed separately because the committed feature configuration remains disabled.
 
-## Automated checks
+## Current source checks
 
-- `node --test linux-features/local/github-issues-tab/test.js linux-features/local/github-issues-tab/issues-adapter.test.js`: 81 passed.
-- `node --test scripts/patch-linux-window-ui.test.js`: 379 passed.
-- `node --test linux-features/local/github-issues-tab/test.js linux-features/local/github-issues-tab/issues-adapter.test.js linux-features/*/test.js`: 681 passed.
+- `node --test linux-features/local/github-issues-tab/test.js linux-features/local/github-issues-tab/issues-adapter.test.js`: 90 passed.
+- `node --test scripts/patch-linux-window-ui.test.js`: 413 passed.
+- `node --test linux-features/local/github-issues-tab/test.js linux-features/local/github-issues-tab/issues-adapter.test.js linux-features/*/test.js`: 940 passed, 1 skipped. The real app-server integration is opt-in with `CODEX_RUN_APP_SERVER_INTEGRATION=1`.
+- `node --test tests/github_issues_preview.test.js`: 1 passed.
+- `bash tests/dev-install_smoke.sh`: passed.
 - `bash tests/scripts_smoke.sh`: passed, including native-package, AppImage, feature staging, and transactional promotion coverage.
 - `./install.sh ./Codex.dmg`: `accepted_with_warnings`; all 17 required core entries passed and all four `github-issues-tab` descriptors applied. The only warning was the pre-existing optional `linux-browser-use-webview-attach-recovery` drift.
 - A fresh post-review extraction of the same DMG confirmed the hardened native-tray gate applies, is idempotent, and verifies upstream teardown plus icon fallback before bypassing obsolete tray compatibility code.

@@ -130,6 +130,9 @@ export function issuesReducer(state, action) {
         const reset = resetDataForHost(state, action.data.host);
         return {
           ...reset,
+          repository: typeof action.data?.repository === "string"
+            ? action.data.repository
+            : action.data?.repository === null ? "" : reset.repository,
           viewerLogin: typeof action.data.viewerLogin === "string" ? action.data.viewerLogin : null,
           capabilities: {
             ...reset.capabilities,
@@ -144,6 +147,9 @@ export function issuesReducer(state, action) {
       return {
         ...state,
         host: typeof action.data?.host === "string" ? action.data.host : state.host,
+        repository: typeof action.data?.repository === "string"
+          ? action.data.repository
+          : action.data?.repository === null ? "" : state.repository,
         viewerLogin: typeof action.data?.viewerLogin === "string" ? action.data.viewerLogin : state.viewerLogin,
         capabilities: {
           ...state.capabilities,
@@ -312,6 +318,8 @@ function bridge() {
   return typeof window !== "undefined" ? window.electronBridge?.githubIssues : null;
 }
 
+const GITHUB_ISSUES_SETTING_KEY = "codex-linux-github-issues-enabled";
+
 function safeError(error) {
   return error && typeof error === "object" ? error : { code: "adapter-failed", message: "GitHub Issues request failed" };
 }
@@ -332,6 +340,17 @@ function formatRelative(value) {
 
 function display(value, fallback = "—") {
   return value == null || value === "" ? fallback : String(value);
+}
+
+function formatDateTime(value) {
+  if (!value) return "Unknown time";
+  const time = Date.parse(value);
+  if (Number.isNaN(time)) return display(value);
+  try {
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(time));
+  } catch {
+    return display(value);
+  }
 }
 
 function safeHost(value) {
@@ -437,7 +456,7 @@ function tokenStyles() {
 }
 
 function createStyles() {
-  return `.github-issues-route button,.github-issues-route input{font:inherit}.github-issues-route button:focus-visible,.github-issues-route input:focus-visible,.github-issues-route a:focus-visible,.github-issues-route [role="button"]:focus-visible{outline:2px solid var(--color-token-text-link-foreground, var(--color-token-link, currentColor));outline-offset:2px}.github-issues-route button{cursor:pointer}.github-issues-route button[aria-pressed="true"]{font-weight:600}.github-issues-route a{color:var(--color-token-text-link-foreground, var(--color-token-link, currentColor))}.github-issues-route-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.github-issues-route-main{display:grid;grid-template-columns:minmax(280px,36%) minmax(0,1fr);flex:1;min-height:0}.github-issues-route-inbox{min-width:0;overflow:auto;border-right:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-width:0;overflow:auto;padding:18px 22px}.github-issues-route-compact .github-issues-route-main{display:flex;flex-direction:column}.github-issues-route-compact .github-issues-route-inbox{max-height:42vh;border-right:0;border-bottom:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-compact .github-issues-route-detail{min-height:360px;padding:16px}@media (max-width:760px){.github-issues-route-toolbar input{min-width:120px;flex:1}.github-issues-route-main{display:flex;flex-direction:column}.github-issues-route-inbox{max-height:42vh;border-right:0;border-bottom:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-height:360px;padding:16px}}`;
+  return `.github-issues-route button,.github-issues-route input{font:inherit}.github-issues-route button:focus-visible,.github-issues-route input:focus-visible,.github-issues-route a:focus-visible,.github-issues-route [role="button"]:focus-visible{outline:2px solid var(--color-token-text-link-foreground, var(--color-token-link, currentColor));outline-offset:2px}.github-issues-route button{cursor:pointer}.github-issues-route button[aria-pressed="true"]{font-weight:600}.github-issues-route a{color:var(--color-token-text-link-foreground, var(--color-token-link, currentColor))}.github-issues-route-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.github-issues-route-main{display:grid;grid-template-columns:minmax(280px,36%) minmax(0,1fr);flex:1;min-height:0}.github-issues-route-inbox{min-width:0;overflow:auto;border-right:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-width:0;overflow:auto;padding:18px 22px}.github-issues-route-inline-detail{padding:16px 14px;border-bottom:1px solid var(--color-token-border-light, currentColor);background:var(--color-token-main-surface-secondary, transparent)}.github-issues-route-description{padding:0 0 20px;border-bottom:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-markdown{min-width:0;line-height:1.6;overflow-wrap:anywhere}.github-issues-route-markdown pre{max-width:100%;overflow:auto;padding:12px;border:1px solid var(--color-token-border-light, currentColor);border-radius:8px;background:var(--color-token-main-surface-secondary, transparent)}.github-issues-route-markdown code{overflow-wrap:anywhere}.github-issues-route-markdown img{max-width:100%;height:auto}.github-issues-route-markdown table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}.github-issues-route-markdown th,.github-issues-route-markdown td{padding:6px 8px;border:1px solid var(--color-token-border-light, currentColor);text-align:left}.github-issues-route-compact .github-issues-route-main{display:flex;flex-direction:column}.github-issues-route-compact .github-issues-route-inbox{flex:1;min-height:0;max-height:none;border-right:0;border-bottom:0}.github-issues-route-compact .github-issues-route-detail{min-height:360px;padding:16px}@media (max-width:760px){.github-issues-route-toolbar input{min-width:120px;flex:1}.github-issues-route-main{display:flex;flex-direction:column}.github-issues-route-inbox{max-height:42vh;border-right:0;border-bottom:1px solid var(--color-token-border-light, currentColor)}.github-issues-route-detail{min-height:360px;padding:16px}}`;
 }
 
 function node(React, type, props, ...children) {
@@ -479,6 +498,25 @@ function Link({ React, url, openExternal, children: propChildren, label }, child
   return createSafeExternalLink(React, openExternal, url, label, content);
 }
 
+function markdownAccount(host, viewerLogin) {
+  if (!host) return null;
+  return { hostId: host, hostname: host, login: viewerLogin || "" };
+}
+
+function renderMarkdown(React, Markdown, content, account) {
+  if (!Markdown) return node(React, "div", { style: { whiteSpace: "pre-wrap" } }, content);
+  return node(React, Markdown, {
+    account,
+    allowBasicHtml: true,
+    className: "min-w-0 text-token-text-primary [&_h2]:font-medium",
+    cwd: null,
+    content,
+    source: content,
+    markdown: content,
+    children: content,
+  });
+}
+
 function Button({ React, components, label, onClick, pressed = false, disabled = false }) {
   const SharedButton = typeof components?.Button === "function" ? components.Button : null;
   const buttonProps = {
@@ -492,33 +530,40 @@ function Button({ React, components, label, onClick, pressed = false, disabled =
   return node(React, SharedButton || "button", buttonProps, label);
 }
 
-function ListRow({ React, issue, selected, onSelect, host, openExternal }) {
+function ListRow({ React, issue, selected, onSelect, host, openExternal, detailId, rowKey }) {
   const labels = Array.isArray(issue.labels) ? issue.labels : [];
-  const repoLink = repositoryUrl(host, issue.repository);
   const authorUrl = userUrl(host, issue.author);
+  const onRowClick = (event) => {
+    if (event?.target?.closest?.("button")) return;
+    onSelect?.();
+  };
   return node(React, "div", {
+    key: rowKey || issue.id,
     role: "group",
+    className: "github-issues-route-issue-row",
+    onClick: onRowClick,
     style: {
-      display: "block", width: "100%", padding: "12px 14px",
-      borderBottom: "1px solid var(--color-token-border-light, currentColor)", background: selected ? "var(--color-token-bg-secondary, transparent)" : "transparent",
-      color: "var(--color-token-text-primary, currentColor)",
+      boxSizing: "border-box", display: "block", width: "calc(100% - 16px)", margin: "6px 8px 0", padding: "12px 14px",
+      border: "1px solid var(--color-token-border-light, rgba(255, 255, 255, 0.12))",
+      borderLeft: selected ? "3px solid var(--color-token-text-link-foreground, currentColor)" : "1px solid var(--color-token-border-light, rgba(255, 255, 255, 0.12))",
+      borderRadius: "8px", background: selected ? "var(--color-token-bg-secondary, rgba(255, 255, 255, 0.08))" : "var(--color-token-main-surface-secondary, rgba(255, 255, 255, 0.025))",
+      color: "var(--color-token-text-primary, currentColor)", cursor: "pointer",
     },
   },
-  node(React, "div", { style: { fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } },
-    repoLink ? Link({ React, url: repoLink, openExternal, label: "Open repository" }, display(issue.repository)) : display(issue.repository),
-    ` · #${display(issue.number)}`,
-  ),
   node(React, "button", {
     type: "button",
     onClick: onSelect,
-    "aria-pressed": selected,
-    "aria-label": `${display(issue.repository)} Issue ${display(issue.number)} ${display(issue.title)}`,
+    "aria-expanded": selected,
+    "aria-controls": detailId || undefined,
+    "aria-label": `Issue #${display(issue.number)}: ${display(issue.title)}`,
     style: {
-      display: "block", width: "100%", textAlign: "left", marginTop: "6px", padding: 0, border: 0,
+      display: "flex", alignItems: "flex-start", gap: "8px", width: "100%", textAlign: "left", padding: 0, border: 0,
       background: "transparent", color: "inherit", cursor: "pointer",
     },
   },
-    node(React, "div", { style: { fontSize: "14px", fontWeight: 600 } }, display(issue.title)),
+    node(React, "span", { style: { flex: "0 0 auto", color: "var(--color-token-text-link-foreground, currentColor)", fontSize: "15px", fontWeight: 700, lineHeight: 1.35, letterSpacing: "0.01em" } }, `#${display(issue.number)}`),
+    node(React, "span", { "aria-hidden": true, style: { flex: "0 0 auto", width: "12px", color: "var(--color-token-text-secondary, currentColor)", lineHeight: 1.35 } }, selected ? "▾" : "▸"),
+    node(React, "span", { style: { minWidth: 0, fontSize: "14px", fontWeight: 600, lineHeight: 1.35 } }, display(issue.title)),
   ),
   node(React, "div", { style: { display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "6px", fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } },
     `${display(issue.state).toLowerCase()} · `,
@@ -529,14 +574,14 @@ function ListRow({ React, issue, selected, onSelect, host, openExternal }) {
   ));
 }
 
-function TimelineEvent({ React, item, Markdown, openExternal, host }) {
+function TimelineEvent({ React, item, Markdown, openExternal, host, account }) {
   const targetUrl = item?.target?.url || commitUrl(host, item?.target?.repository, item?.target?.oid);
   const fromUrl = repositoryUrl(host, item?.fromRepository);
   const toUrl = repositoryUrl(host, item?.toRepository);
   const commitMessage = item?.kind === "reference" && typeof item.target?.message === "string" ? item.target.message.split("\n", 1)[0] : null;
   return node(React, "article", { style: { padding: "12px 0", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
     node(React, "div", { style: { fontSize: "13px" } }, ...timelineEventText(React, item, host, openExternal)),
-    node(React, "div", { style: { marginTop: "4px", fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } }, display(item?.createdAt)),
+    node(React, "time", { dateTime: item?.createdAt || undefined, style: { display: "block", marginTop: "4px", fontSize: "12px", color: "var(--color-token-text-secondary, currentColor)" } }, formatDateTime(item?.createdAt)),
     item?.kind === "transfer" && (fromUrl || toUrl)
       ? node(React, "div", { style: { marginTop: "4px" } },
         fromUrl ? Link({ React, url: fromUrl, openExternal, label: "Open source repository" }, display(item.fromRepository)) : display(item.fromRepository),
@@ -545,7 +590,7 @@ function TimelineEvent({ React, item, Markdown, openExternal, host }) {
       )
       : null,
     item?.kind === "comment" && item.body
-      ? node(React, "div", { style: { marginTop: "8px" } }, Markdown ? node(React, Markdown, { content: item.body, source: item.body, markdown: item.body, children: item.body }) : node(React, "div", { style: { whiteSpace: "pre-wrap" } }, item.body))
+      ? node(React, "div", { className: "github-issues-route-markdown", style: { marginTop: "8px" } }, renderMarkdown(React, Markdown, item.body, account))
       : item?.kind === "reference" && targetUrl
         ? node(React, "div", { style: { marginTop: "4px" } },
           Link({ React, url: targetUrl, openExternal, label: "Open related reference" }, display(item.target.title || item.target.repository || item.target.oid)),
@@ -555,11 +600,9 @@ function TimelineEvent({ React, item, Markdown, openExternal, host }) {
   );
 }
 
-function renderIssueBody(React, issue, Markdown) {
+function renderIssueBody(React, issue, Markdown, account) {
   if (!issue?.body) return node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "No issue body");
-  return Markdown
-    ? node(React, Markdown, { content: issue.body, source: issue.body, markdown: issue.body, children: issue.body })
-    : node(React, "div", { style: { whiteSpace: "pre-wrap" } }, issue.body);
+  return renderMarkdown(React, Markdown, issue.body, account);
 }
 
 function ErrorMessage({ React, error }) {
@@ -571,6 +614,7 @@ function ErrorMessage({ React, error }) {
     unauthorized: "GitHub authorization was denied",
     offline: "GitHub could not be reached",
     "rate-limited": "GitHub API rate limit reached",
+    "repository-required": "Open Issues from a workspace with a GitHub origin remote",
     "invalid-response": "GitHub returned an incomplete response",
   };
   return node(React, "div", { role: "alert", style: { padding: "12px 14px", color: "var(--color-token-error-foreground, currentColor)" } }, messages[error.code] || "GitHub Issues request failed");
@@ -583,13 +627,40 @@ export function createIssuesRoute(deps = {}) {
   const openExternal = deps.openExternal;
   const components = deps.components || {};
   const compact = deps.compact === true;
+  const getSetting = deps.getSetting;
+  const configuredRoot = typeof deps.root === "string" ? deps.root : null;
+  const configuredHost = deps.hostId === "local" ? null : safeHost(deps.hostId);
 
-  function IssuesRoute() {
+  function IssuesRoute(props = {}) {
+    const root = configuredRoot || (typeof props.root === "string" ? props.root : null);
+    const requestedHost = configuredHost || safeHost(props.hostId);
     const [state, dispatch] = React.useReducer(issuesReducer, undefined, initialIssuesState);
     const pending = React.useRef(Object.create(null));
     const listDebounce = React.useRef(null);
+    const listPageEndCursor = React.useRef(null);
+    listPageEndCursor.current = state.listPage.endCursor;
     const mounted = React.useRef(true);
+    const [featureEnabled, setFeatureEnabled] = React.useState(
+      typeof getSetting === "function" ? null : true,
+    );
     const renderButton = (props) => Button({ React, components, ...props });
+
+    React.useEffect(() => {
+      let alive = true;
+      if (typeof getSetting !== "function") {
+        setFeatureEnabled(true);
+        return () => { alive = false; };
+      }
+      setFeatureEnabled(null);
+      Promise.resolve().then(() => getSetting(GITHUB_ISSUES_SETTING_KEY)).then((result) => {
+        if (alive) setFeatureEnabled(result?.value !== false);
+      }).catch(() => {
+        // If the optional settings request is unavailable, preserve the
+        // feature's existing behavior instead of breaking the Issues view.
+        if (alive) setFeatureEnabled(true);
+      });
+      return () => { alive = false; };
+    }, [getSetting]);
 
     const cancel = React.useCallback((requestId) => {
       if (!requestId) return;
@@ -647,23 +718,23 @@ export function createIssuesRoute(deps = {}) {
       return requestId;
     }, [cancel]);
 
-    // A null host intentionally asks the adapter to select GitHub CLI's active authenticated host.
-    const loadCapabilities = React.useCallback((host = null) => send("capabilities", "capabilities", { host }, { type: "capabilities-start" }, "capabilities-success", "capabilities-error"), [send]);
+    // The side panel supplies the workspace root and Pull Request host; a null host still selects GitHub CLI's active authenticated host, while the adapter derives the exact origin repository there.
+    const loadCapabilities = React.useCallback((host = requestedHost) => send("capabilities", "capabilities", { host, root }, { type: "capabilities-start" }, "capabilities-success", "capabilities-error"), [requestedHost, root, send]);
     const loadList = React.useCallback((append = false) => {
       if (listDebounce.current !== null) {
         clearTimeout(listDebounce.current);
         listDebounce.current = null;
       }
-      if (!state.host) return null;
+      if (!state.host || !state.repository.trim()) return null;
       return send("list", "listIssues", {
         host: state.host,
         view: state.view,
         state: state.stateFilter,
-        repository: state.repository.trim() || null,
+        repository: state.repository.trim(),
         text: state.text,
-        cursor: append ? state.listPage.endCursor : null,
+        cursor: append ? listPageEndCursor.current : null,
       }, { type: "list-start" }, "list-success", "list-error", { append });
-    }, [send, state.host, state.view, state.stateFilter, state.repository, state.text, state.listPage.endCursor]);
+    }, [send, state.host, state.view, state.stateFilter, state.repository, state.text]);
     const loadDetail = React.useCallback((issue) => {
       if (!state.host || !issue?.id) return null;
       cancelPending("timeline");
@@ -701,6 +772,15 @@ export function createIssuesRoute(deps = {}) {
       });
       return requestId;
     }, [cancel, cancelPending, state.host]);
+    const toggleIssue = React.useCallback((issue) => {
+      if (issue?.id && issue.id === state.selectedId) {
+        cancelPending("detail");
+        cancelPending("timeline");
+        dispatch({ type: "select", issueId: null });
+        return;
+      }
+      loadDetail(issue);
+    }, [cancelPending, loadDetail, state.selectedId]);
     const loadTimeline = React.useCallback(() => {
       const issueId = state.selectedId;
       const cursor = state.timeline.pageInfo?.endCursor;
@@ -709,13 +789,15 @@ export function createIssuesRoute(deps = {}) {
     }, [send, state.host, state.selectedId, state.timeline.pageInfo?.endCursor]);
 
     React.useEffect(() => {
-      mounted.current = true;
-      loadCapabilities(null);
-      return () => {
+      const cleanup = () => {
         mounted.current = false;
         for (const slot of Object.keys(pending.current)) cancelPending(slot);
       };
-    }, [loadCapabilities, cancelPending]);
+      if (featureEnabled !== true) return cleanup;
+      mounted.current = true;
+      loadCapabilities(requestedHost);
+      return cleanup;
+    }, [loadCapabilities, cancelPending, requestedHost, featureEnabled]);
     const previousHost = React.useRef(state.host);
     React.useEffect(() => {
       if (previousHost.current === state.host) return;
@@ -723,7 +805,8 @@ export function createIssuesRoute(deps = {}) {
       previousHost.current = state.host;
     }, [state.host, cancelPending]);
     React.useEffect(() => {
-      if (!state.host || state.capabilities.status === "loading") return undefined;
+      if (featureEnabled !== true || !state.host || state.capabilities.status === "loading") return undefined;
+      if (!state.repository.trim()) return undefined;
       const timer = setTimeout(() => {
         if (listDebounce.current === timer) listDebounce.current = null;
         loadList(false);
@@ -733,7 +816,7 @@ export function createIssuesRoute(deps = {}) {
         clearTimeout(timer);
         if (listDebounce.current === timer) listDebounce.current = null;
       };
-    }, [loadList, state.host, state.view, state.stateFilter, state.repository, state.text, state.capabilities.status]);
+    }, [loadList, state.host, state.view, state.stateFilter, state.repository, state.text, state.capabilities.status, featureEnabled]);
 
     const style = { ...tokenStyles(), display: "flex", flexDirection: "column", minHeight: "420px", height: "100%", fontSize: "14px" };
     const tabs = ["assigned", "authored", "all"];
@@ -741,80 +824,110 @@ export function createIssuesRoute(deps = {}) {
     const issue = state.detail.issue;
     const issueRepositoryUrl = repositoryUrl(state.host, issue?.repository);
     const issueAuthorUrl = userUrl(state.host, issue?.author);
+    const account = markdownAccount(state.host, state.viewerLogin);
     const listRateLimit = rateLimitText(state.list.rateLimit);
     const detailRateLimit = rateLimitText(state.detail.rateLimit);
     const capabilitiesRateLimit = rateLimitText(state.capabilities.rateLimit);
     const timelineRateLimit = rateLimitText(state.timeline.rateLimit);
+    const currentRateLimit = detailRateLimit || timelineRateLimit || listRateLimit || capabilitiesRateLimit;
+    const featureStatus = featureEnabled === null
+      ? "Checking GitHub Issues setting…"
+      : featureEnabled
+        ? null
+        : "GitHub Issues is disabled in Settings → Linux desktop";
+    const selectedIndex = state.list.items.findIndex((item) => item.id === state.selectedId);
+    const selectedDetailId = selectedIndex >= 0 ? `github-issue-detail-${selectedIndex}` : undefined;
+    const renderDetailContent = () => [
+      !state.selectedId ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Select an Issue to view its details") : null,
+      state.detail.status === "loading" ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Loading Issue details…") : null,
+      state.detail.status === "error" ? ErrorMessage({ React, error: state.detail.error }) : null,
+      issue ? node(React, "article", null,
+        node(React, "header", { style: { borderBottom: "1px solid var(--color-token-border-light, currentColor)", paddingBottom: "14px", marginBottom: "16px" } },
+          node(React, "h2", { style: { margin: 0, fontSize: "20px", lineHeight: 1.3 } }, display(issue.title)),
+          node(React, "div", { style: { marginTop: "7px", color: "var(--color-token-text-secondary, currentColor)" } },
+            issueRepositoryUrl ? Link({ React, url: issueRepositoryUrl, openExternal, label: "Open repository" }, display(issue.repository)) : display(issue.repository),
+            ` · #${display(issue.number)} · ${display(issue.state).toLowerCase()}`,
+          ),
+          issue.url ? node(React, "div", { style: { marginTop: "7px" } }, Link({ React, url: issue.url, openExternal, label: "Open Issue in browser" }, "Open in browser")) : null,
+          node(React, "div", { style: { marginTop: "9px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } },
+            "by ", issueAuthorUrl ? Link({ React, url: issueAuthorUrl, openExternal, label: "Open author profile" }, display(issue.author)) : display(issue.author, "unknown author"),
+            " · created ", node(React, "time", { dateTime: issue.createdAt || undefined }, formatDateTime(issue.createdAt)),
+            ` · updated ${formatRelative(issue.updatedAt)}`,
+          ),
+          issue.stateReason ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Reason: ${issue.stateReason}`) : null,
+          issue.labels?.length ? node(React, "div", { style: { marginTop: "8px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, ...labelNodes(React, issue.labels)) : null,
+          issue.assignees?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, issue.assignees.join(", ")) : null,
+          issue.milestone?.title ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, milestoneText(issue.milestone)) : null,
+          issue.projects?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Projects: ${issue.projects.map((project) => project.title || project.number).join(", ")}`) : null,
+        ),
+        state.detail.status === "partial" ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Some Issue fields were unavailable") : null,
+        node(React, "section", { "aria-label": "Issue description", className: "github-issues-route-description" },
+          node(React, "h3", { style: { margin: "0 0 10px", fontSize: "15px" } }, "Description"),
+          node(React, "div", { className: "github-issues-route-markdown" }, renderIssueBody(React, issue, Markdown, account)),
+        ),
+        node(React, "section", { "aria-label": "Issue timeline", style: { paddingTop: "18px" } },
+          node(React, "h3", { style: { margin: "0 0 4px", fontSize: "15px" } }, "Timeline"),
+          state.timeline.status === "partial" ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, "Some timeline fields were unavailable") : null,
+          state.timeline.status === "error" ? ErrorMessage({ React, error: state.timeline.error }) : null,
+          state.timeline.items.length === 0 && state.timeline.status !== "loading" && state.timeline.status !== "error" ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "No timeline activity") : null,
+          ...state.timeline.items.map((item, index) => node(React, TimelineEvent, { key: item.id || `${item.type}-${index}`, React, item, Markdown, openExternal, host: state.host, account })),
+          state.timeline.pageInfo?.hasNextPage ? node(React, "div", { style: { marginTop: "12px" } }, renderButton({ label: "Load more timeline", onClick: loadTimeline, disabled: state.timeline.status === "loading" || state.timeline.status === "refreshing" })) : null,
+        ),
+      ) : null,
+    ];
+    const issueRows = state.list.items.flatMap((item, index) => {
+      const rowDetailId = `github-issue-detail-${index}`;
+      const row = ListRow({
+        React,
+        issue: item,
+        host: state.host,
+        openExternal,
+        selected: item.id === state.selectedId,
+        detailId: compact ? rowDetailId : item.id === state.selectedId ? selectedDetailId : undefined,
+        rowKey: item.id,
+        onSelect: () => toggleIssue(item),
+      });
+      if (!compact || item.id !== state.selectedId) return [row];
+      return [row, node(React, "section", { key: `${item.id}-detail`, id: rowDetailId, className: "github-issues-route-inline-detail", "aria-label": "Issue detail" }, ...renderDetailContent())];
+    });
+    const repositoryUnavailable = ["ready", "partial"].includes(state.capabilities.status) && !state.repository.trim();
+    const inbox = node(React, "section", { className: "github-issues-route-inbox", "aria-label": "Issue inbox" },
+      state.list.status === "loading" ? node(React, "p", { style: { padding: "18px", color: "var(--color-token-text-secondary, currentColor)" } }, "Loading Issues…") : null,
+      state.list.status === "error" ? ErrorMessage({ React, error: state.list.error }) : null,
+      repositoryUnavailable ? node(React, "p", { role: "status", style: { padding: "18px", color: "var(--color-token-text-secondary, currentColor)" } }, "No GitHub origin remote found for this workspace") : null,
+      state.list.status === "partial" ? node(React, "p", { role: "status", style: { padding: "10px 14px", color: "var(--color-token-text-secondary, currentColor)" } }, "Some Issue fields were unavailable") : null,
+      !repositoryUnavailable && state.list.status !== "loading" && state.list.status !== "error" && state.list.items.length === 0 ? node(React, "p", { style: { padding: "18px", color: "var(--color-token-text-secondary, currentColor)" } }, "No Issues match these filters") : null,
+      ...issueRows,
+      state.listPage.hasNextPage ? node(React, "div", { style: { padding: "12px 14px" } }, renderButton({ label: "Next page", onClick: () => loadList(true), disabled: state.list.status === "loading" || state.list.status === "refreshing" })) : null,
+    );
+    const detailPanel = node(React, "section", { className: "github-issues-route-detail", id: selectedDetailId, "aria-label": "Issue detail" }, ...renderDetailContent());
+    const toolbar = node(React, "div", { className: "github-issues-route-toolbar", style: { padding: "12px 18px", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
+      ...tabs.map((view) => renderButton({ label: view[0].toUpperCase() + view.slice(1), pressed: state.view === view, onClick: () => changeFilter({ type: "view-set", view }) })),
+      node(React, "span", { style: { width: "1px", height: "20px", background: "var(--color-token-border-light, currentColor)", margin: "0 4px" } }),
+      ...states.map((filter) => renderButton({ label: filter[0].toUpperCase() + filter.slice(1), pressed: state.stateFilter === filter, onClick: () => changeFilter({ type: "state-set", stateFilter: filter }) })),
+      node(React, "span", { title: "Derived from this workspace's origin remote", style: { marginLeft: "auto", color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } },
+        "Repository: ", display(state.repository, "Resolving workspace remote…"),
+      ),
+      node(React, "label", { style: { display: "flex", alignItems: "center", gap: "6px" } },
+        node(React, "span", null, "Text"),
+        node(React, "input", { value: state.text, onChange: (event) => changeFilter({ type: "text-set", text: event.target.value }), placeholder: "Search", "aria-label": "Text filter", style: { ...tokenStyles(), border: "1px solid var(--color-token-border-light, currentColor)", borderRadius: "6px", padding: "6px 8px", width: "170px" } }),
+      ),
+      renderButton({ label: "Refresh", onClick: () => loadList(false), disabled: state.list.status === "loading" || state.list.status === "refreshing" }),
+    );
     return node(React, "div", { className: compact ? "github-issues-route github-issues-route-compact" : "github-issues-route", style },
       node(React, "style", null, createStyles()),
       node(React, "header", { style: { display: "flex", alignItems: "center", gap: "12px", padding: "14px 18px", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
         node(React, "strong", null, "Issues"),
         node(React, "span", { style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, display(state.host, "No GitHub host")),
-        state.capabilities.status === "loading" ? node(React, "span", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, "Checking GitHub access…") : null,
-        state.capabilities.status === "error" ? ErrorMessage({ React, error: state.capabilities.error }) : null,
-        capabilitiesRateLimit ? node(React, "span", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, capabilitiesRateLimit) : null,
+        featureStatus ? node(React, "span", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, featureStatus) : null,
+        featureEnabled === true && state.capabilities.status === "loading" ? node(React, "span", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, "Checking GitHub access…") : null,
+        featureEnabled === true && state.capabilities.status === "error" ? ErrorMessage({ React, error: state.capabilities.error }) : null,
+        featureEnabled === true && currentRateLimit ? node(React, "span", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, currentRateLimit) : null,
       ),
-      node(React, "div", { className: "github-issues-route-toolbar", style: { padding: "12px 18px", borderBottom: "1px solid var(--color-token-border-light, currentColor)" } },
-        ...tabs.map((view) => renderButton({ label: view[0].toUpperCase() + view.slice(1), pressed: state.view === view, onClick: () => changeFilter({ type: "view-set", view }) })),
-        node(React, "span", { style: { width: "1px", height: "20px", background: "var(--color-token-border-light, currentColor)", margin: "0 4px" } }),
-        ...states.map((filter) => renderButton({ label: filter[0].toUpperCase() + filter.slice(1), pressed: state.stateFilter === filter, onClick: () => changeFilter({ type: "state-set", stateFilter: filter }) })),
-        node(React, "label", { style: { display: "flex", alignItems: "center", gap: "6px", marginLeft: "auto" } },
-          node(React, "span", null, "Repository"),
-          node(React, "input", { value: state.repository, onChange: (event) => changeFilter({ type: "repository-set", repository: event.target.value }), placeholder: "owner/name", "aria-label": "Repository filter", style: { ...tokenStyles(), border: "1px solid var(--color-token-border-light, currentColor)", borderRadius: "6px", padding: "6px 8px", width: "150px" } }),
-        ),
-        node(React, "label", { style: { display: "flex", alignItems: "center", gap: "6px" } },
-          node(React, "span", null, "Text"),
-          node(React, "input", { value: state.text, onChange: (event) => changeFilter({ type: "text-set", text: event.target.value }), placeholder: "Search", "aria-label": "Text filter", style: { ...tokenStyles(), border: "1px solid var(--color-token-border-light, currentColor)", borderRadius: "6px", padding: "6px 8px", width: "170px" } }),
-        ),
-        renderButton({ label: "Refresh", onClick: () => loadList(false), disabled: state.list.status === "loading" || state.list.status === "refreshing" }),
-      ),
-      node(React, "main", { className: "github-issues-route-main" },
-        node(React, "section", { className: "github-issues-route-inbox", "aria-label": "Issue inbox" },
-          state.list.status === "loading" ? node(React, "p", { style: { padding: "18px", color: "var(--color-token-text-secondary, currentColor)" } }, "Loading Issues…") : null,
-          state.list.status === "error" ? ErrorMessage({ React, error: state.list.error }) : null,
-          listRateLimit ? node(React, "p", { role: "status", style: { padding: "8px 14px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, listRateLimit) : null,
-          state.list.status === "partial" ? node(React, "p", { role: "status", style: { padding: "10px 14px", color: "var(--color-token-text-secondary, currentColor)" } }, "Some Issue fields were unavailable") : null,
-          state.list.status !== "loading" && state.list.status !== "error" && state.list.items.length === 0 ? node(React, "p", { style: { padding: "18px", color: "var(--color-token-text-secondary, currentColor)" } }, "No Issues match these filters") : null,
-          ...state.list.items.map((item) => ListRow({ React, issue: item, host: state.host, openExternal, selected: item.id === state.selectedId, onSelect: () => loadDetail(item) })),
-          state.listPage.hasNextPage ? node(React, "div", { style: { padding: "12px 14px" } }, renderButton({ label: "Next page", onClick: () => loadList(true), disabled: state.list.status === "loading" || state.list.status === "refreshing" })) : null,
-        ),
-        node(React, "section", { className: "github-issues-route-detail", "aria-label": "Issue detail" },
-          !state.selectedId ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Select an Issue to view its details") : null,
-          state.detail.status === "loading" ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Loading Issue details…") : null,
-          state.detail.status === "error" ? ErrorMessage({ React, error: state.detail.error }) : null,
-          issue ? node(React, "article", null,
-            node(React, "header", { style: { borderBottom: "1px solid var(--color-token-border-light, currentColor)", paddingBottom: "14px", marginBottom: "16px" } },
-              node(React, "h2", { style: { margin: 0, fontSize: "20px", lineHeight: 1.3 } }, display(issue.title)),
-              node(React, "div", { style: { marginTop: "7px", color: "var(--color-token-text-secondary, currentColor)" } },
-                issueRepositoryUrl ? Link({ React, url: issueRepositoryUrl, openExternal, label: "Open repository" }, display(issue.repository)) : display(issue.repository),
-                ` · #${display(issue.number)} · ${display(issue.state).toLowerCase()}`,
-              ),
-              issue.url ? node(React, "div", { style: { marginTop: "7px" } }, Link({ React, url: issue.url, openExternal, label: "Open Issue in browser" }, "Open in browser")) : null,
-              node(React, "div", { style: { marginTop: "9px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } },
-                "by ", issueAuthorUrl ? Link({ React, url: issueAuthorUrl, openExternal, label: "Open author profile" }, display(issue.author)) : display(issue.author, "unknown author"),
-                ` · created ${display(issue.createdAt)} · updated ${formatRelative(issue.updatedAt)}`,
-              ),
-              issue.stateReason ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Reason: ${issue.stateReason}`) : null,
-              issue.labels?.length ? node(React, "div", { style: { marginTop: "8px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, ...labelNodes(React, issue.labels)) : null,
-              issue.assignees?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, issue.assignees.join(", ")) : null,
-              issue.milestone?.title ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, milestoneText(issue.milestone)) : null,
-              issue.projects?.length ? node(React, "div", { style: { marginTop: "5px", color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, `Projects: ${issue.projects.map((project) => project.title || project.number).join(", ")}`) : null,
-            ),
-            state.detail.status === "partial" ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)" } }, "Some Issue fields were unavailable") : null,
-            detailRateLimit ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, detailRateLimit) : null,
-            node(React, "section", { "aria-label": "Issue body", style: { paddingBottom: "18px" } }, renderIssueBody(React, issue, Markdown)),
-            node(React, "section", { "aria-label": "Issue timeline" },
-              node(React, "h3", { style: { margin: "0 0 4px", fontSize: "15px" } }, "Timeline"),
-              state.timeline.status === "partial" ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "13px" } }, "Some timeline fields were unavailable") : null,
-              state.timeline.status === "error" ? ErrorMessage({ React, error: state.timeline.error }) : null,
-              timelineRateLimit ? node(React, "p", { role: "status", style: { color: "var(--color-token-text-secondary, currentColor)", fontSize: "12px" } }, timelineRateLimit) : null,
-              state.timeline.items.length === 0 && state.timeline.status !== "loading" && state.timeline.status !== "error" ? node(React, "p", { style: { color: "var(--color-token-text-secondary, currentColor)" } }, "No timeline activity") : null,
-              ...state.timeline.items.map((item, index) => node(React, TimelineEvent, { key: item.id || `${item.type}-${index}`, React, item, Markdown, openExternal, host: state.host })),
-              state.timeline.pageInfo?.hasNextPage ? node(React, "div", { style: { marginTop: "12px" } }, renderButton({ label: "Load more timeline", onClick: loadTimeline, disabled: state.timeline.status === "loading" || state.timeline.status === "refreshing" })) : null,
-            ),
-          ) : null,
-        ),
-      ),
+      featureEnabled === true ? toolbar : null,
+      node(React, "main", { className: "github-issues-route-main" }, featureEnabled === true
+        ? (compact ? inbox : [inbox, detailPanel])
+        : node(React, "p", { role: "status", style: { margin: "auto", padding: "24px", color: "var(--color-token-text-secondary, currentColor)", textAlign: "center" } }, featureStatus)),
     );
   }
 

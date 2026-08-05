@@ -505,9 +505,11 @@ function resolveLinuxDesktopSettingsAsset(extractedDir) {
   });
 
   const source = addLinuxRequestInputAutoResolutionSetting(
-    buildLinuxDesktopSettingsSource(dependencies).replace(
-      "var KEYS={",
-      linuxDesktopSettingsSourceMarker,
+    addLinuxGithubIssuesSetting(
+      buildLinuxDesktopSettingsSource(dependencies).replace(
+        "var KEYS={",
+        linuxDesktopSettingsSourceMarker,
+      ),
     ),
   );
   return {
@@ -516,6 +518,27 @@ function resolveLinuxDesktopSettingsAsset(extractedDir) {
     routeAssetSpecifier: versionedAssetSpecifier(linuxDesktopSettingsAsset, source),
     generatedAssets: dependencies.generatedAssets,
   };
+}
+
+function addLinuxGithubIssuesSetting(source) {
+  const settingKey = linuxSettingsKeys.githubIssues;
+  const keysMarker = `autoUpdateOnExit:"${linuxSettingsKeys.autoUpdateOnExit}"`;
+  const warmToggle = '$.jsx(LinuxToggle,{settingKey:KEYS.warmStart,label:"Warm start",description:"Use the running app for launch actions instead of starting a fresh Electron instance."})';
+  if (source.includes(`githubIssues:"${settingKey}"`)) {
+    return source;
+  }
+  if (!source.includes(keysMarker) || !source.includes(warmToggle)) {
+    throw new Error("Required Keybinds settings patch failed: could not add GitHub Issues setting");
+  }
+  return source
+    .replace(
+      keysMarker,
+      `${keysMarker},githubIssues:"${settingKey}"`,
+    )
+    .replace(
+      warmToggle,
+      `${warmToggle},$.jsx(LinuxToggle,{settingKey:KEYS.githubIssues,label:"GitHub Issues",description:"Show the read-only GitHub Issues view and Environment action. Turn this off if the Issues feature is unstable.",defaultValue:!0})`,
+    );
 }
 
 function addLinuxRequestInputAutoResolutionSetting(source) {
@@ -839,6 +862,7 @@ function hasCompleteLinuxDesktopSettingsSource(previousSource) {
     `systemTray:${JSON.stringify(linuxSettingsKeys.systemTray)}`,
     `warmStart:${JSON.stringify(linuxSettingsKeys.warmStart)}`,
     `autoUpdateOnExit:${JSON.stringify(linuxSettingsKeys.autoUpdateOnExit)}`,
+    `githubIssues:${JSON.stringify(linuxSettingsKeys.githubIssues)}`,
     "function codexLinuxChecked(",
     "class LinuxToggle extends React.Component",
     "class LinuxBuildInfoPanel extends React.Component",
@@ -854,6 +878,7 @@ function hasCompleteLinuxDesktopSettingsSource(previousSource) {
     "settingKey:KEYS.systemTray",
     "settingKey:KEYS.warmStart",
     "settingKey:KEYS.autoUpdateOnExit",
+    "settingKey:KEYS.githubIssues",
     "$.jsx(LinuxBuildInfoPanel,{})",
   ];
   if (

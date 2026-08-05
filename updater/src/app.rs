@@ -450,8 +450,11 @@ fn run_daemon_startup_maintenance(
 
     sync_and_persist(config, state, paths)?;
     let interrupted_recovery = recover_interrupted_install(state, paths)?;
-    if interrupted_recovery.should_notify_installed() {
-        let _ = maybe_notify_installed(state, paths, config.notifications);
+    if interrupted_recovery.should_notify_completion()
+        || (interrupted_recovery == PendingInstallRecovery::NoChange
+            && state.status == UpdateStatus::Installed)
+    {
+        let _ = maybe_notify_install_completed(state, paths, config.notifications);
     }
     complete_current_dmg_update_if_already_installed(config, state, paths)?;
     codex_cli::reconcile_if_present(state, paths)?;
@@ -657,7 +660,7 @@ impl PendingInstallRecovery {
         !matches!(self, Self::NoChange)
     }
 
-    fn should_notify_installed(self) -> bool {
+    fn should_notify_completion(self) -> bool {
         matches!(self, Self::CandidateInstalled)
     }
 }
@@ -1253,8 +1256,11 @@ async fn run_check_cycle_with_options(
     reload_state_from_disk(config, state, paths)?;
     if recover_entrypoint_state {
         let interrupted_recovery = recover_interrupted_install(state, paths)?;
-        if interrupted_recovery.should_notify_installed() {
-            let _ = maybe_notify_installed(state, paths, config.notifications);
+        if interrupted_recovery.should_notify_completion()
+            || (interrupted_recovery == PendingInstallRecovery::NoChange
+                && state.status == UpdateStatus::Installed)
+        {
+            let _ = maybe_notify_install_completed(state, paths, config.notifications);
         }
         complete_current_dmg_update_if_already_installed(config, state, paths)?;
         normalize_workspace_dir_and_persist(state, paths)?;
@@ -1417,16 +1423,22 @@ async fn reconcile_pending_install(
 ) -> Result<()> {
     sync_runtime_state(config, state);
     let interrupted_recovery = recover_interrupted_install(state, paths)?;
+    if interrupted_recovery.should_notify_completion()
+        || (interrupted_recovery == PendingInstallRecovery::NoChange
+            && state.status == UpdateStatus::Installed)
+    {
+        let _ = maybe_notify_install_completed(state, paths, config.notifications);
+    }
     if interrupted_recovery.completed() {
-        if interrupted_recovery.should_notify_installed() {
-            let _ = maybe_notify_installed(state, paths, config.notifications);
-        }
+        return Ok(());
+    }
+    if state.status == UpdateStatus::Installed {
         return Ok(());
     }
     let pending_recovery = complete_pending_install_if_already_installed(state, paths)?;
     if pending_recovery.completed() {
-        if pending_recovery.should_notify_installed() {
-            let _ = maybe_notify_installed(state, paths, config.notifications);
+        if pending_recovery.should_notify_completion() {
+            let _ = maybe_notify_install_completed(state, paths, config.notifications);
         }
         return Ok(());
     }
@@ -1597,10 +1609,13 @@ async fn run_install_ready_locked(
 ) -> Result<()> {
     sync_and_persist(config, state, paths)?;
     let interrupted_recovery = recover_interrupted_install(state, paths)?;
-    if interrupted_recovery.completed() {
-        if interrupted_recovery.should_notify_installed() {
-            let _ = maybe_notify_installed(state, paths, config.notifications);
-        }
+    if interrupted_recovery.should_notify_completion()
+        || (interrupted_recovery == PendingInstallRecovery::NoChange
+            && state.status == UpdateStatus::Installed)
+    {
+        let _ = maybe_notify_install_completed(state, paths, config.notifications);
+    }
+    if interrupted_recovery.completed() || state.status == UpdateStatus::Installed {
         println!("ChatGPT Desktop update is already installed or superseded.");
         return Ok(());
     }
@@ -1612,8 +1627,8 @@ async fn run_install_ready_locked(
 
     let pending_recovery = complete_pending_install_if_already_installed(state, paths)?;
     if pending_recovery.completed() {
-        if pending_recovery.should_notify_installed() {
-            let _ = maybe_notify_installed(state, paths, config.notifications);
+        if pending_recovery.should_notify_completion() {
+            let _ = maybe_notify_install_completed(state, paths, config.notifications);
         }
         println!("ChatGPT Desktop update is already installed or superseded.");
         return Ok(());
@@ -2008,16 +2023,22 @@ fn maybe_notify_with_event_key(
     summary: &str,
     body: &str,
 ) -> Result<()> {
-    if !state.notified_events.insert(event_key.to_string()) {
+    if state.notified_events.contains(event_key) {
         return Ok(());
     }
 
     if enabled {
         if let Err(error) = notify::send(summary, body) {
-            warn!(?error, "failed to send desktop notification");
+            warn!(
+                ?error,
+                event = event_key,
+                "failed to send desktop notification; will retry"
+            );
+            return Ok(());
         }
     }
 
+    state.notified_events.insert(event_key.to_string());
     persist_state(paths, state)?;
     Ok(())
 }
@@ -2057,7 +2078,7 @@ fn maybe_notify_cli_missing(
     )
 }
 
-fn maybe_notify_installed(
+fn maybe_notify_install_completed(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     enabled: bool,
@@ -2066,13 +2087,20 @@ fn maybe_notify_installed(
         return Ok(());
     }
 
+    let body = match state.installed_version.as_str() {
+        "" | "unknown" => "A new Linux installation completed successfully and will be used the next time you open Codex Desktop.".to_string(),
+        version => format!(
+            "Version {version} is installed and will be used the next time you open Codex Desktop."
+        ),
+    };
+
     maybe_notify(
         state,
         paths,
         enabled,
-        "installed",
-        "ChatGPT Desktop updated",
-        "The new package is installed and will be used the next time you open the app.",
+        "install_completed",
+        "New Codex Desktop installation completed",
+        &body,
     )
 }
 
@@ -2081,28 +2109,19 @@ fn maybe_notify_update_ready(
     paths: &RuntimePaths,
     enabled: bool,
 ) -> Result<()> {
-    let version = state
-        .candidate_version
-        .as_deref()
-        .unwrap_or(&state.installed_version);
-    let event_key = format!("ready_to_install:{version}");
-    if !state.notified_events.insert(event_key) {
-        return Ok(());
-    }
-
-    if enabled {
-        let body = if state.auto_install_on_app_exit {
-            "A rebuilt Linux package is ready. Close ChatGPT Desktop to install it, or open ChatGPT Desktop and choose Update."
-        } else {
-            "A rebuilt Linux package is ready. Open ChatGPT Desktop and choose Update to install it."
-        };
-        if let Err(error) = notify::send("ChatGPT Desktop update ready", body) {
-            warn!(?error, "failed to send update-ready notification");
-        }
-    }
-
-    persist_state(paths, state)?;
-    Ok(())
+    let body = if state.auto_install_on_app_exit {
+        "A rebuilt Linux package is ready. Close ChatGPT Desktop to install it, or open ChatGPT Desktop and choose Update."
+    } else {
+        "A rebuilt Linux package is ready. Open ChatGPT Desktop and choose Update to install it."
+    };
+    maybe_notify(
+        state,
+        paths,
+        enabled,
+        "ready_to_install",
+        "ChatGPT Desktop update ready",
+        body,
+    )
 }
 
 fn maybe_send_notification(enabled: bool, summary: &str, body: &str) {
@@ -2145,7 +2164,7 @@ async fn trigger_install(
         state.notified_events.clear();
         cache_cleanup::normalize_artifact_workspace_dir(workspace_root, state);
         persist_state(paths, state)?;
-        let _ = maybe_notify_installed(state, paths, notifications);
+        let _ = maybe_notify_install_completed(state, paths, notifications);
         maybe_prune_workspace_cache(workspace_root, state);
         return Ok(());
     }
@@ -3739,7 +3758,7 @@ mod tests {
         assert_eq!(stale_state.candidate_version, None);
         assert!(stale_state
             .notified_events
-            .contains(&format!("installed:{installed_version}")));
+            .contains(&format!("install_completed:{installed_version}")));
         Ok(())
     }
 
@@ -4801,7 +4820,7 @@ mod tests {
     }
 
     #[test]
-    fn matching_pending_install_recovery_records_installed_notification_event() -> Result<()> {
+    fn matching_pending_install_recovery_records_install_completion_event() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let paths = test_paths(temp.path());
         paths.ensure_dirs()?;
@@ -4812,20 +4831,20 @@ mod tests {
         state.candidate_version = Some("2026.04.28.082247+abcdef12".to_string());
 
         let recovery = complete_pending_install_if_already_installed(&mut state, &paths)?;
-        if recovery.should_notify_installed() {
-            maybe_notify_installed(&mut state, &paths, false)?;
+        if recovery.should_notify_completion() {
+            maybe_notify_install_completed(&mut state, &paths, false)?;
         }
 
         assert_eq!(state.status, UpdateStatus::Installed);
         assert_eq!(state.candidate_version, None);
         assert!(state
             .notified_events
-            .contains("installed:2026.04.28.082247-abcdef12.fc43"));
+            .contains("install_completed:2026.04.28.082247-abcdef12.fc43"));
         Ok(())
     }
 
     #[test]
-    fn superseded_pending_install_recovery_skips_installed_notification_event() -> Result<()> {
+    fn superseded_pending_install_recovery_skips_install_completion_event() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let paths = test_paths(temp.path());
         paths.ensure_dirs()?;
@@ -4843,8 +4862,8 @@ mod tests {
             .insert("ready_to_install:2026.06.24.050316+4bb552bf".to_string());
 
         let recovery = complete_pending_install_if_already_installed(&mut state, &paths)?;
-        if recovery.should_notify_installed() {
-            maybe_notify_installed(&mut state, &paths, false)?;
+        if recovery.should_notify_completion() {
+            maybe_notify_install_completed(&mut state, &paths, false)?;
         }
 
         assert_eq!(state.status, UpdateStatus::Installed);
@@ -4852,7 +4871,7 @@ mod tests {
         assert!(!state
             .notified_events
             .iter()
-            .any(|event| event.starts_with("installed:")));
+            .any(|event| event.starts_with("install_completed:")));
         Ok(())
     }
 
@@ -5233,7 +5252,7 @@ mod tests {
     }
 
     #[test]
-    fn installed_notifications_are_deduplicated_after_recovery() -> Result<()> {
+    fn install_completion_notifications_are_deduplicated_after_recovery() -> Result<()> {
         let temp = tempfile::tempdir()?;
         let paths = RuntimePaths {
             config_file: temp.path().join("config/config.toml"),
@@ -5249,14 +5268,14 @@ mod tests {
         state.status = UpdateStatus::Installed;
         state.installed_version = "2026.04.16.120000".to_string();
 
-        maybe_notify_installed(&mut state, &paths, false)?;
+        maybe_notify_install_completed(&mut state, &paths, false)?;
         let notified_count = state.notified_events.len();
-        maybe_notify_installed(&mut state, &paths, false)?;
+        maybe_notify_install_completed(&mut state, &paths, false)?;
 
         assert_eq!(state.notified_events.len(), notified_count);
         assert!(state
             .notified_events
-            .contains("installed:2026.04.16.120000"));
+            .contains("install_completed:2026.04.16.120000"));
         Ok(())
     }
 

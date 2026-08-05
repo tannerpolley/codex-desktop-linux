@@ -13,6 +13,9 @@ It:
   polkit authentication agent is available, or keeps the package ready and
   reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...`
   command when no auth agent is available
+- sends a desktop notification after a new package is confirmed installed,
+  including after a daemon restart recovers an install completed while the app
+  was closed
 - performs best-effort Codex CLI preflight from the launcher
 
 ## Standard fix and update flow

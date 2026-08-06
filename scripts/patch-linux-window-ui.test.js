@@ -173,6 +173,7 @@ const {
   summarizePatchReport,
 } = require("./lib/patch-report.js");
 const {
+  applyBrowserAnnotationHitTestingPatch,
   applyBrowserAnnotationScreenshotPatch,
   applyLocalEnvironmentActionModalDraftPatch,
   applyPersistentRateLimitFooterPatch,
@@ -4254,6 +4255,19 @@ test("patches current webview opaque window default bundle shapes", () => {
     patchedSettings,
     /navigator\.userAgent\.includes\(`Linux`\)&&x\?\.opaqueWindows==null&&\(x=\{\.\.\.x,opaqueWindows:!0\}\);let S=/,
   );
+});
+
+test("keeps the top-level browser comments root out of annotation hit testing", () => {
+  const source =
+    "function ul(e,t,n){let r=n.shadowRoot?.querySelector(`[data-browser-comment-root]`);if(!(r instanceof HTMLElement))return ia(e,t)}";
+
+  const patched = applyPatchTwice(applyBrowserAnnotationHitTestingPatch, source);
+
+  assert.match(
+    patched,
+    /shadowRoot\?\.querySelector\(`\[data-browser-comment-root\]`\)\?\?document\.getElementById\(Zl\)/,
+  );
+  assert.equal(applyBrowserAnnotationHitTestingPatch(patched), patched);
 });
 
 test("patches the current comment preload screenshot anchor shape", () => {

@@ -1987,6 +1987,41 @@ function applyLocalEnvironmentActionModalDraftPatch(currentSource) {
   return `${beforeFunction}${patchedFunction}${afterFunction}`;
 }
 
+function applyBrowserAnnotationHitTestingPatch(currentSource) {
+  if (
+    currentSource.includes(
+      "shadowRoot?.querySelector(`[data-browser-comment-root]`)??document.getElementById(Zl)",
+    )
+  ) {
+    return currentSource;
+  }
+
+  const rootLookupRegex =
+    /function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=\3\.shadowRoot\?\.querySelector\(`\[data-browser-comment-root\]`\);/;
+  const match = currentSource.match(rootLookupRegex);
+  if (match == null) {
+    if (
+      currentSource.includes("data-browser-comment-root") ||
+      currentSource.includes("elementFromPoint")
+    ) {
+      console.warn(
+        "WARN: Could not find browser annotation hit-testing root lookup — skipping overlay hit-testing patch",
+      );
+    }
+    return currentSource;
+  }
+
+  const [, , , hostVar, rootVar] = match;
+  const shadowRootLookup =
+    `let ${rootVar}=${hostVar}.shadowRoot?.querySelector(\`[data-browser-comment-root]\`);`;
+  const topLevelRootLookup =
+    `let ${rootVar}=${hostVar}.shadowRoot?.querySelector(\`[data-browser-comment-root]\`)??document.getElementById(Zl);`;
+  return currentSource.replace(
+    rootLookupRegex,
+    (source) => source.replace(shadowRootLookup, topLevelRootLookup),
+  );
+}
+
 function applyBrowserAnnotationScreenshotPatch(currentSource) {
   const storedAnchorRegex =
     /if\([A-Za-z_$][\w$]*&&([A-Za-z_$][\w$]*)\?\.annotation\.anchor\.kind===`element`\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\(\1\.annotation\.anchor\);([A-Za-z_$][\w$]*)=void 0,/;
@@ -2558,7 +2593,9 @@ function patchCommentPreloadBundle(extractedDir) {
   }
 
   const source = fs.readFileSync(commentPreloadBundle, "utf8");
-  const patchedSource = applyBrowserAnnotationScreenshotPatch(source);
+  const patchedSource = applyBrowserAnnotationScreenshotPatch(
+    applyBrowserAnnotationHitTestingPatch(source),
+  );
   if (patchedSource !== source) {
     fs.writeFileSync(commentPreloadBundle, patchedSource, "utf8");
     return { matched: true, changed: true };
@@ -2567,6 +2604,7 @@ function patchCommentPreloadBundle(extractedDir) {
 }
 
 module.exports = {
+  applyBrowserAnnotationHitTestingPatch,
   applyBrowserAnnotationScreenshotPatch,
   applyLinuxAppServerBackfillWaitPatch,
   applyLinuxAppServerFeatureEnablementPatch,

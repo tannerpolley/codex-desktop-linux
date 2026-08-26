@@ -10,6 +10,10 @@ test("Cachix publishes every audited Nix runtime for both architectures", () => 
   assert.match(workflow, /system: x86_64-linux/);
   assert.match(workflow, /system: aarch64-linux/);
   assert.match(workflow, /runner: ubuntu-24\.04-arm/);
+  assert.match(
+    workflow,
+    /if: \$\{\{ github\.repository == 'ilysenko\/codex-desktop-linux' \}\}/,
+  );
   assert.match(workflow, /checks\.\$\{\{ matrix\.system \}\}\.modules/);
   assert.match(workflow, /Require Cachix publishing credentials/);
   assert.match(workflow, /test -n "\$CACHIX_AUTH_TOKEN"/);

@@ -14,6 +14,7 @@ concurrency:
 
 jobs:
   populate:
+    if: ${{ github.repository == 'ilysenko/codex-desktop-linux' }}
     strategy:
       fail-fast: false
       matrix:

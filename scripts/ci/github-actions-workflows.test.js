@@ -28,6 +28,8 @@ test("CI runs the complete workflow regression suite", () => {
   assert.match(nixBuild, /system: x86_64-linux/);
   assert.match(nixBuild, /system: aarch64-linux/);
   assert.match(nixBuild, /runner: ubuntu-24\.04-arm/);
+  assert.match(nixBuild, /cachix\/cachix-action@[0-9a-f]{40}/);
+  assert.match(nixBuild, /skipPush: true/);
   assert.match(nixBuild, /checks\.\$\{\{ matrix\.system \}\}\.modules/);
   assert.match(nixBuild, /nix-runtime-chronicle-skysight/);
   assert.match(nixBuild, /nix-runtime-computer-use/);
@@ -40,6 +42,8 @@ test("CI runs the complete workflow regression suite", () => {
   assert.match(rust, /cargo clippy -p codex-record-replay-linux --all-targets -- -D warnings/);
 
   const nixVm = job(workflow, "nix-vm");
+  assert.match(nixVm, /cachix\/cachix-action@[0-9a-f]{40}/);
+  assert.match(nixVm, /skipPush: true/);
   assert.match(nixVm, /checks\.x86_64-linux\.nixos-vm/);
 
   const nixGate = job(workflow, "nix");

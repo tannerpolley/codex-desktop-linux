@@ -53,6 +53,7 @@ jobs:
       - run: cargo clippy -p codex-record-replay-linux --all-targets -- -D warnings
 
   nix-build:
+    if: ${{ github.repository == 'ilysenko/codex-desktop-linux' }}
     strategy:
       fail-fast: false
       matrix:
@@ -117,5 +118,9 @@ jobs:
           NIX_BUILD_RESULT: ${{ needs.nix-build.result }}
           NIX_VM_RESULT: ${{ needs.nix-vm.result }}
         run: |
-          test "$NIX_BUILD_RESULT" = success
+          if [ "$GITHUB_REPOSITORY" = ilysenko/codex-desktop-linux ]; then
+            test "$NIX_BUILD_RESULT" = success
+          else
+            test "$NIX_BUILD_RESULT" = skipped
+          fi
           test "$NIX_VM_RESULT" = success

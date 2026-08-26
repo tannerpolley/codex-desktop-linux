@@ -25,6 +25,10 @@ test("CI runs the complete workflow regression suite", () => {
   const workflow = read(".github/workflows/ci.yml");
   assert.match(workflow, /node --test scripts\/ci\/\*\.test\.js/);
   const nixBuild = job(workflow, "nix-build");
+  assert.match(
+    nixBuild,
+    /if: \$\{\{ github\.repository == 'ilysenko\/codex-desktop-linux' \}\}/,
+  );
   assert.match(nixBuild, /system: x86_64-linux/);
   assert.match(nixBuild, /system: aarch64-linux/);
   assert.match(nixBuild, /runner: ubuntu-24\.04-arm/);
@@ -49,6 +53,7 @@ test("CI runs the complete workflow regression suite", () => {
   const nixGate = job(workflow, "nix");
   assert.match(nixGate, /if: \$\{\{ always\(\) \}\}/);
   assert.match(nixGate, /test "\$NIX_BUILD_RESULT" = success/);
+  assert.match(nixGate, /test "\$NIX_BUILD_RESULT" = skipped/);
   assert.match(nixGate, /test "\$NIX_VM_RESULT" = success/);
 });
 

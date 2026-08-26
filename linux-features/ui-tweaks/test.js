@@ -9,6 +9,7 @@ const test = require("node:test");
 
 require("./suggested-prompts.test.js");
 require("./dock-icon.test.js");
+require("./skill-mention-ordering.test.js");
 
 const {
   discoverLinuxFeatureManifests,
@@ -242,6 +243,11 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:sidebar-project-name-style", "webview-asset", "optional"],
         [
           "feature:ui-tweaks:extended-ui-font-size",
+          "extracted-app:post-webview",
+          "optional",
+        ],
+        [
+          "feature:ui-tweaks:skill-mention-namespace-order",
           "extracted-app:post-webview",
           "optional",
         ],

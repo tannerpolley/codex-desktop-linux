@@ -19,6 +19,7 @@ Enable it in the local, gitignored feature config:
 | --- | --- | --- | --- |
 | `appearance.dockIcon` | `patches/dock-icon.js` | Exposes the upstream Dock icon selector and synchronizes the selected icon across Linux windows, tray, and supported desktop launchers. | `tweaks.appearance.dockIcon.enabled` |
 | `appearance.uiFontSize` | `patches/ui-font-size.js` | Raises the upstream 16 px UI font-size maximum to a configurable value. | `tweaks.appearance.uiFontSize.enabled`, `tweaks.appearance.uiFontSize.max` |
+| `composer.skillMentionOrdering` | `patches/skill-mention-ordering.js` | Groups namespace matches such as `cse:*` into one relevance tier, then orders them by display name. | `tweaks.composer.skillMentionOrdering.enabled` |
 | `home.suggestedPrompts` | `patches/suggested-prompts.js` | Exposes the upstream Suggested Prompts setting and enables generated project-aware cards on Home. | `tweaks.home.suggestedPrompts.enabled` |
 | `modelPicker.showModelsByDefault` | `patches/model-picker-model-list.js` | Opens the advanced picker by default and shows model choices inline instead of hiding them behind the compact Power slider and a nested Model submenu. | `tweaks.modelPicker.showModelsByDefault.enabled` |
 | `reasoning.keepEffortLabelsEnglish` | `patches/reasoning-effort-labels.js` | Keeps reasoning effort values in English in the Simplified Chinese UI while leaving the surrounding interface translated. | `tweaks.reasoning.keepEffortLabelsEnglish.enabled` |
@@ -50,6 +51,30 @@ Example local config:
 ```
 
 Each tweak documents its own config keys below.
+
+### `composer.skillMentionOrdering`
+
+When an unqualified skill query matches a namespace such as `cse`, all
+`cse:*` matches share one relevance tier and are ordered by display name. A
+query that already contains `:` keeps the official ranking behavior. This
+tweak is independently disabled by default:
+
+```json
+{
+  "enabled": ["ui-tweaks"],
+  "settings": {
+    "ui-tweaks": {
+      "tweaks": {
+        "composer": {
+          "skillMentionOrdering": {
+            "enabled": true
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ### `appearance.dockIcon`
 

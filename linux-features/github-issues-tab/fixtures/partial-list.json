@@ -1,0 +1,43 @@
+{
+  "data": {
+    "search": {
+      "nodes": [
+        {
+          "id": "I_kwDOExample1",
+          "number": 42,
+          "title": "Fix parser race",
+          "url": "https://github.com/openai/codex/issues/42",
+          "state": "OPEN",
+          "stateReason": null,
+          "createdAt": "2026-07-16T10:00:00Z",
+          "updatedAt": "2026-07-17T10:00:00Z",
+          "author": { "login": "octocat" },
+          "repository": { "nameWithOwner": "openai/codex", "name": "codex", "owner": { "login": "openai" } },
+          "labels": { "nodes": [{ "name": "bug", "color": "d73a4a", "description": "Something is not working" }] },
+          "assignees": { "nodes": [{ "login": "octocat" }] },
+          "milestone": { "title": "v1", "number": 1, "state": "OPEN", "dueOn": "2026-08-01T00:00:00Z" },
+          "comments": { "totalCount": 4 }
+        },
+        {
+          "id": "I_kwDOExample1",
+          "number": 42,
+          "title": "Fix parser race",
+          "url": "https://github.com/openai/codex/issues/42",
+          "state": "OPEN",
+          "stateReason": null,
+          "createdAt": "2026-07-16T10:00:00Z",
+          "updatedAt": "2026-07-17T10:00:00Z",
+          "author": { "login": "octocat" },
+          "repository": { "nameWithOwner": "openai/codex", "name": "codex", "owner": { "login": "openai" } },
+          "labels": { "nodes": [] },
+          "assignees": { "nodes": [] },
+          "milestone": null,
+          "comments": { "totalCount": 4 }
+        }
+      ],
+      "pageInfo": { "hasNextPage": true, "endCursor": "cursor-2" }
+    },
+    "rateLimit": { "cost": 2, "remaining": 4997, "resetAt": "2026-07-17T18:00:00Z" }
+  },
+  "errors": [{ "type": "FORBIDDEN", "path": ["search", "nodes", 1, "title"], "message": "field unavailable" }]
+}

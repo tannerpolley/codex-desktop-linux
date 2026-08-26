@@ -1,0 +1,21 @@
+{
+  "data": {
+    "node": {
+      "__typename": "Issue",
+      "timelineItems": {
+        "nodes": [
+          {
+            "__typename": "IssueComment",
+            "id": "partial-comment-1",
+            "createdAt": "2026-07-19T01:00:00Z",
+            "author": null,
+            "body": "Comment retained despite a partial response."
+          }
+        ],
+        "pageInfo": null
+      }
+    },
+    "rateLimit": { "cost": 4, "remaining": 4972, "resetAt": "2026-07-17T18:00:00Z" }
+  },
+  "errors": [{ "type": "FIELD_ERROR", "path": ["node", "timelineItems", "pageInfo"] }]
+}

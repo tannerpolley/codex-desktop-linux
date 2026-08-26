@@ -28,6 +28,22 @@ manager that rebuilds from the signed stable APT repository.
 - Known retired feature IDs are ignored; arbitrary unknown IDs remain errors.
 - Do not edit generated output (`codex-app/`, `dist/`, candidates, `target/`).
 
+## Live application and window safety
+
+- Treat every open or running application and window as protected live user
+  state, especially the app hosting the current Codex task.
+- Research, inspection, build, test, and migration requests authorize read-only
+  observation only with respect to live applications and windows.
+- Before quitting, closing, restarting, relaunching, killing, signaling,
+  focusing, raising, minimizing, moving, resizing, navigating, replacing, or
+  otherwise manipulating any live application or window, obtain the user's
+  explicit approval immediately beforehand through native user input. Prior or
+  general approval does not carry over to a later live-state action.
+- Stop before any install, promotion, migration, or cleanup step that would
+  affect a running application or its windows and request that approval.
+- Process cleanup is limited to processes launched by the current task; never
+  terminate a pre-existing application as cleanup.
+
 ## Source routing
 
 - Upstream verification/extraction: `scripts/lib/upstream-linux-package.js` and

@@ -15,6 +15,11 @@
     }
   },
   "tweaks": {
+    "composer": {
+      "skillMentionOrdering": {
+        "enabled": false
+      }
+    },
     "appearance": {
       "dockIcon": {
         "enabled": false

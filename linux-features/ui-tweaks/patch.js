@@ -2,6 +2,7 @@
 
 const sidebarProjectName = require("./patches/sidebar-project-name.js");
 const uiFontSize = require("./patches/ui-font-size.js");
+const skillMentionOrdering = require("./patches/skill-mention-ordering.js");
 const modelPickerModelList = require("./patches/model-picker-model-list.js");
 const reasoningEffortLabels = require("./patches/reasoning-effort-labels.js");
 const dockIcon = require("./patches/dock-icon.js");
@@ -17,6 +18,7 @@ module.exports = {
   descriptors: patchesFrom(
     sidebarProjectName,
     uiFontSize,
+    skillMentionOrdering,
     modelPickerModelList,
     reasoningEffortLabels,
     dockIcon,

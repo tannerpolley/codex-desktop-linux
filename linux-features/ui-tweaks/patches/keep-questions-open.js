@@ -151,7 +151,14 @@ function applyKeepQuestionsOpenPatch(source, context = {}) {
   return patchTaskRow(patchStructuredQuestionFunction(source, hook), hook);
 }
 
-function settingsAliases(source) {
+function settingsAliases(source, requestAsset) {
+  const requestImport = source.match(
+    new RegExp(`import\\{([^}]*)\\}from["']\\./${escapeRegExp(requestAsset.assetName)}["']`, "u"),
+  )?.[1];
+  const request = requestImport?.split(",").map((specifier) => specifier.trim()).map((specifier) => {
+    const match = specifier.match(/^([^\s]+)(?:\s+as\s+([A-Za-z_$][\w$]*))?$/u);
+    return match?.[1] === requestAsset.exportName ? (match[2] ?? match[1]) : null;
+  }).find((value) => value != null);
   return {
     jsx: source.match(/function [A-Za-z_$][\w$]*\(\)\{[\s\S]{0,200}?\(0,([A-Za-z_$][\w$]*)\.jsx\)\([^)]*slug:`general-settings`/u)?.[1],
     react: source.match(/\b([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\(\),1\)/u)?.[1],
@@ -159,12 +166,13 @@ function settingsAliases(source) {
     surface: source.match(/\.Content,\{children:\(0,[A-Za-z_$][\w$]*\.jsxs?\)\(([A-Za-z_$][\w$]*),\{children:/u)?.[1],
     row: source.match(/\.jsx\)\(([A-Za-z_$][\w$]*),\{label:[A-Za-z_$]/u)?.[1],
     toggle: source.match(/\.jsx\)\(([A-Za-z_$][\w$]*),\{checked:[^{}]{0,200}onChange:/u)?.[1],
+    request,
   };
 }
 
 function applyKeepQuestionsOpenSettingsPatch(source, requestAsset, context = {}) {
   if (source.includes(SETTINGS_MARKER)) return source;
-  const aliases = settingsAliases(source);
+  const aliases = settingsAliases(source, requestAsset);
   if (Object.values(aliases).some((value) => value == null)) return source;
   const page = source.match(/function ([A-Za-z_$][\w$]*)\(\)\{[\s\S]{0,300}?slug:`general-settings`/u)?.[1];
   if (page == null) return source;
@@ -181,16 +189,15 @@ function applyKeepQuestionsOpenSettingsPatch(source, requestAsset, context = {})
   );
   if (!placement.test(body)) return source;
 
-  const { jsx, react, group, surface, row, toggle } = aliases;
-  const request = `import(\"./${requestAsset.assetName}\").then(e=>e.${requestAsset.exportName}`;
+  const { jsx, react, group, surface, row, toggle, request } = aliases;
   const fallback = JSON.stringify(revisionValues(context));
   const rows = REVISION_DEFINITIONS.map(([key, label, description]) =>
     `(0,${jsx}.jsx)(${row},{label:${JSON.stringify(label)},description:${JSON.stringify(description)},control:(0,${jsx}.jsx)(${toggle},{checked:e[${JSON.stringify(key)}]===!0,disabled:n||o,onChange:n=>l(${JSON.stringify(key)},n),ariaLabel:${JSON.stringify(label)}})})`,
   ).join(",");
   const component =
     `/*${SETTINGS_MARKER}*/function codexLinuxRevisionsSettings(){let[e,t]=(0,${react}.useState)(${fallback}),[n,r]=(0,${react}.useState)(!0),[i,a]=(0,${react}.useState)(null),[o,s]=(0,${react}.useState)(!1),[c,d]=(0,${react}.useState)(\`unavailable\`);` +
-    `(0,${react}.useEffect)(()=>{let e=!0,b=window.electronBridge?.linuxRevisions?.request;return typeof b!==\`function\`?(a(\`Linux revisions bridge is unavailable.\`),r(!1),()=>{e=!1}):Promise.all([${request}(\`get-global-state\`,{params:{key:\`${SETTING_KEY}\`}})),b({operation:\`get\`})]).then(([n,i])=>{e&&(t({...i.tweaks,\`composer.keepQuestionsOpen\`:n?.value!==!1}),d(i.status),r(!1))}).catch(t=>{e&&(a(t instanceof Error?t.message:String(t)),r(!1))}),()=>{e=!1}},[]);` +
-    `let l=(n,r)=>t(e=>({...e,[n]:r})),u=()=>{let n=window.electronBridge?.linuxRevisions?.request;if(typeof n!==\`function\`)return void a(\`Linux revisions bridge is unavailable.\`);s(!0),a(null),Promise.all([${request}(\`set-global-state\`,{params:{key:\`${SETTING_KEY}\`,value:e[\`composer.keepQuestionsOpen\`]}})),n({operation:\`apply\`,tweaks:e})]).then(()=>d(\`queued\`)).catch(e=>a(e instanceof Error?e.message:String(e))).finally(()=>s(!1))};` +
+    `(0,${react}.useEffect)(()=>{let e=!0,b=window.electronBridge?.linuxRevisions?.request;return typeof b!==\`function\`?(a(\`Linux revisions bridge is unavailable.\`),r(!1),()=>{e=!1}):Promise.all([${request}(\`get-global-state\`,{params:{key:\`${SETTING_KEY}\`}}),b({operation:\`get\`})]).then(([n,i])=>{e&&(t({...i.tweaks,\`composer.keepQuestionsOpen\`:n?.value!==!1}),d(i.status),r(!1))}).catch(t=>{e&&(a(t instanceof Error?t.message:String(t)),r(!1))}),()=>{e=!1}},[]);` +
+    `let l=(n,r)=>t(e=>({...e,[n]:r})),u=()=>{let n=window.electronBridge?.linuxRevisions?.request;if(typeof n!==\`function\`)return void a(\`Linux revisions bridge is unavailable.\`);s(!0),a(null),Promise.all([${request}(\`set-global-state\`,{params:{key:\`${SETTING_KEY}\`,value:e[\`composer.keepQuestionsOpen\`]}}),n({operation:\`apply\`,tweaks:e})]).then(()=>d(\`queued\`)).catch(e=>a(e instanceof Error?e.message:String(e))).finally(()=>s(!1))};` +
     `return(0,${jsx}.jsxs)(${group},{children:[(0,${jsx}.jsx)(${group}.Header,{title:\`Linux revisions\`}),(0,${jsx}.jsx)(${group}.Content,{children:(0,${jsx}.jsxs)(${surface},{children:[${rows},(0,${jsx}.jsx)(${row},{label:\`Apply revisions\`,description:i??(c===\`queued\`?\`Rebuild queued. It will install after ChatGPT Community closes.\`:\`Updater status: \`+c),control:(0,${jsx}.jsx)(\`button\`,{type:\`button\`,disabled:n||o,onClick:u,className:\`rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50\`,children:o?\`Queuing…\`:\`Apply and rebuild\`})})]})})]})}`;
   const patchedBody = body.replace(
     placement,

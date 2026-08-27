@@ -2,6 +2,9 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 const {
@@ -45,4 +48,32 @@ test("generated main bridge allow-lists all eight revisions", () => {
   assert.match(source, /features\.json/);
   assert.match(source, /codex-update-manager/);
   assert.doesNotThrow(() => new vm.Script(source));
+});
+
+test("generated main bridge reads the packaged revision settings", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "linux-revisions-bridge-"));
+  const resourcesPath = path.join(root, "app", "resources");
+  const templatePath = path.join(root, "app", "update-builder", "linux-features", "features.json");
+  fs.mkdirSync(path.dirname(templatePath), { recursive: true });
+  fs.mkdirSync(resourcesPath, { recursive: true });
+  fs.writeFileSync(templatePath, JSON.stringify({
+    enabled: ["ui-tweaks"],
+    settings: { "ui-tweaks": { tweaks: { composer: { keepQuestionsOpen: { enabled: true } } } } },
+  }));
+  let handler;
+  const context = {
+    electron: { ipcMain: { handle: (_channel, value) => { handler = value; } } },
+    globalThis: {},
+    isTrusted: () => true,
+    process: { env: { XDG_CONFIG_HOME: path.join(root, "config"), XDG_STATE_HOME: path.join(root, "state") }, pid: 1, resourcesPath },
+    require,
+  };
+  try {
+    vm.runInNewContext(mainBridgeSource("electron.ipcMain", "isTrusted"), context);
+    const result = await handler({}, { operation: "get" });
+    assert.equal(result.tweaks["composer.keepQuestionsOpen"], true);
+    assert.equal(result.status, "unavailable");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

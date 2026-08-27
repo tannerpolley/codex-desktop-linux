@@ -37,6 +37,7 @@ function appInitialFixture() {
 
 function generalSettingsFixture() {
   return [
+    'import{$Pt as rq}from"./app-initial-fixture.js";',
     "function ha(){let n=(0,$.jsx)(Ht,{slug:`general-settings`});return n}",
     "function ga(){let l=null,T=(0,$.jsxs)(R,{children:[u,(0,$.jsx)(R.Content,{children:(0,$.jsxs)(S,{children:[d]})})]}),E=null,O=null,A=null,j=(0,$.jsxs)($.Fragment,{children:[l,T,E,O,A]});return j}",
     "function row(){return(0,$.jsx)(H,{label:l,control:(0,$.jsx)(bn,{checked:e,onChange:a,ariaLabel:o})})}",
@@ -44,12 +45,17 @@ function generalSettingsFixture() {
   ].join("");
 }
 
-function createExtractedApp(appSource = appInitialFixture(), settingsSource = generalSettingsFixture()) {
+function createExtractedApp(
+  appSource = appInitialFixture(),
+  settingsSource = generalSettingsFixture(),
+  appName = "app-initial-fixture.js",
+  settingsName = "general-settings-fixture.js",
+) {
   const extractedDir = fs.mkdtempSync(path.join(os.tmpdir(), "keep-questions-open-"));
   const assetsDir = path.join(extractedDir, "webview", "assets");
   fs.mkdirSync(assetsDir, { recursive: true });
-  fs.writeFileSync(path.join(assetsDir, "app-initial-fixture.js"), appSource);
-  fs.writeFileSync(path.join(assetsDir, "general-settings-fixture.js"), settingsSource);
+  fs.writeFileSync(path.join(assetsDir, appName), appSource);
+  fs.writeFileSync(path.join(assetsDir, settingsName), settingsSource);
   return { extractedDir, assetsDir };
 }
 
@@ -111,6 +117,19 @@ test("adds all Linux revision settings and patches extracted assets atomically",
   }
 });
 
+test("reuses the settings chunk's existing host-request import", () => {
+  const fixture = createExtractedApp();
+  try {
+    const result = applyKeepQuestionsOpenAppPatch(fixture.extractedDir, enabledContext());
+    assert.equal(result.matched, 2, JSON.stringify(result));
+    const settings = fs.readFileSync(path.join(fixture.assetsDir, "general-settings-fixture.js"), "utf8");
+    assert.doesNotMatch(settings, /import\("\.\/app-initial-fixture\.js"\)/);
+    assert.match(settings, /rq\(`get-global-state`/);
+  } finally {
+    fs.rmSync(fixture.extractedDir, { recursive: true, force: true });
+  }
+});
+
 test("matches the current signed official bundle when provided", { skip: process.env.CODEX_OFFICIAL_EXTRACTED_DIR == null }, () => {
   const sourceDir = process.env.CODEX_OFFICIAL_EXTRACTED_DIR;
   const assetsDir = path.join(sourceDir, "webview", "assets");
@@ -121,13 +140,15 @@ test("matches the current signed official bundle when provided", { skip: process
   const fixture = createExtractedApp(
     fs.readFileSync(path.join(assetsDir, appName), "utf8"),
     fs.readFileSync(path.join(assetsDir, settingsName), "utf8"),
+    appName,
+    settingsName,
   );
   try {
     const result = applyKeepQuestionsOpenAppPatch(fixture.extractedDir, enabledContext());
     assert.equal(result.matched, 2, JSON.stringify(result));
     assert.equal(result.changed, 2);
-    const appPath = path.join(fixture.assetsDir, "app-initial-fixture.js");
-    const settingsPath = path.join(fixture.assetsDir, "general-settings-fixture.js");
+    const appPath = path.join(fixture.assetsDir, appName);
+    const settingsPath = path.join(fixture.assetsDir, settingsName);
     const app = fs.readFileSync(appPath, "utf8");
     assert.match(app, /!codexLinuxKeepQuestionsOpen&&_\?\.resolutionState\.status===`scheduled`/);
     assert.match(app, /!codexLinuxKeepQuestionsOpen&&Pt\?\.resolutionState\.status===`scheduled`/);

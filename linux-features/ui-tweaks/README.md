@@ -17,7 +17,7 @@ Enable it in the local, gitignored feature config:
 
 | Tweak | Patch module | What it does | Settings |
 | --- | --- | --- | --- |
-| `composer.keepQuestionsOpen` | `patches/keep-questions-open.js` | Keeps structured questions open until answered or interrupted, removes the Snooze timer, and adds a runtime toggle under General → Linux revisions. | `tweaks.composer.keepQuestionsOpen.enabled` |
+| `composer.keepQuestionsOpen` | `patches/keep-questions-open.js` | Keeps structured questions open until answered or interrupted by removing the main-process empty-answer timer registration, and adds a toggle under General → Linux revisions. | `tweaks.composer.keepQuestionsOpen.enabled` |
 | `appearance.dockIcon` | `patches/dock-icon.js` | Exposes the upstream Dock icon selector and synchronizes the selected icon across Linux windows, tray, and supported desktop launchers. | `tweaks.appearance.dockIcon.enabled` |
 | `appearance.uiFontSize` | `patches/ui-font-size.js` | Raises the upstream 16 px UI font-size maximum to a configurable value. | `tweaks.appearance.uiFontSize.enabled`, `tweaks.appearance.uiFontSize.max` |
 | `composer.skillMentionOrdering` | `patches/skill-mention-ordering.js` | Groups namespace matches such as `cse:*` into one relevance tier, then orders them by display name. | `tweaks.composer.skillMentionOrdering.enabled` |
@@ -63,9 +63,11 @@ Each tweak documents its own config keys below.
 
 ### `composer.keepQuestionsOpen`
 
-The Linux revisions switch updates this behavior immediately when **Apply and
-rebuild** is selected; the queued rebuild preserves the choice in future
-packages. Turning it off restores the official Snooze timer.
+The Linux revisions switch updates this behavior when **Apply and rebuild** is
+selected; the queued rebuild preserves the choice in future packages. Enabling
+it leaves explicit answer submission unchanged and prevents the app from
+creating the timer state that supplies the Snooze control. Turning it off
+restores the official timer.
 
 ```json
 {

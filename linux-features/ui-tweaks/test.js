@@ -274,7 +274,8 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
         ["feature:ui-tweaks:linux-revisions-main-bridge", "main-bundle", "optional"],
         ["feature:ui-tweaks:linux-revisions-preload-bridge", "extracted-app:post-webview", "optional"],
-        ["feature:ui-tweaks:keep-questions-open", "extracted-app:post-webview", "optional"],
+        ["feature:ui-tweaks:keep-questions-open", "extracted-app:pre-webview", "optional"],
+        ["feature:ui-tweaks:linux-revisions-settings", "extracted-app:post-webview", "optional"],
       ],
     );
     const modelPickerDescriptors = descriptors.filter((descriptor) =>

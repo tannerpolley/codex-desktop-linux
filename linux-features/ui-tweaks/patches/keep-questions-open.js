@@ -6,7 +6,7 @@ const { findCodexRequestWebviewAsset } = require("../../../scripts/patches/lib/a
 const { escapeRegExp, findMatchingBrace } = require("../../../scripts/patches/lib/minified-js.js");
 
 const SETTING_KEY = "codex-linux-disable-request-user-input-auto-resolution";
-const RUNTIME_MARKER = "codex-linux-keep-questions-open";
+const RUNTIME_MARKER = "codex-linux-disable-empty-user-input-auto-resolution";
 const SETTINGS_MARKER = "codex-linux-revisions-settings";
 const REVISION_DEFINITIONS = [
   ["composer.keepQuestionsOpen", "Keep questions open", "Wait for an explicit answer or interruption instead of automatically submitting an empty answer."],
@@ -41,114 +41,35 @@ function revisionValues(context) {
   }));
 }
 
-function functionRanges(source) {
-  const ranges = [];
-  const pattern = /function [A-Za-z_$][\w$]*\([^)]*\)\{/gu;
-  let match;
-  while ((match = pattern.exec(source)) != null) {
-    const open = source.indexOf("{", match.index);
-    const close = findMatchingBrace(source, open);
-    if (close !== -1) ranges.push({ start: match.index, end: close + 1 });
-  }
-  return ranges;
-}
-
-function globalStateHook(source) {
-  const atom = source.match(
-    /`get-global-state`,[\s\S]{0,800}?\}\)\),([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\(/u,
-  )?.[1];
-  if (atom == null) return null;
-  return source.match(
-    new RegExp(
-      `function ([A-Za-z_$][\\w$]*)\\(([A-Za-z_$][\\w$]*)\\)\\{return [A-Za-z_$][\\w$]*\\(${escapeRegExp(atom)},\\2\\)\\}`,
-      "u",
-    ),
-  )?.[1] ?? null;
-}
-
-function reactAliasAfter(source, offset) {
-  const tail = source.slice(offset, offset + 32768);
-  return tail.match(/\b([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\(\),1\)/u)?.[1] ?? null;
-}
-
-function patchStructuredQuestionFunction(source, hook) {
-  for (const range of functionRanges(source)) {
-    const original = source.slice(range.start, range.end);
-    if (
-      !original.includes("requestUserInputAutoResolution.snooze") ||
-      !original.includes("autoResolution:") ||
-      !original.includes("onUserInteraction:") ||
-      !original.includes("forceOtherOption") ||
-      !original.includes("replyWithEmptyResponseOnDismiss") ||
-      original.includes(RUNTIME_MARKER)
-    ) continue;
-
-    const state = original.match(
-      /([;,])([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\?\.requestId===([A-Za-z_$][\w$]*)\.requestId\?\3:null([,;])/u,
-    );
-    const argument = original.match(/^function [A-Za-z_$][\w$]*\(([A-Za-z_$][\w$]*)\)\{/u)?.[1];
-    const context = state == null || argument == null ? null : original.slice(0, state.index).match(
-      new RegExp(`\\{([^{}]*\\bconversationId:[^{}]*\\bhostId:[^{}]*)\\}=${escapeRegExp(argument)}[,;]`, "u"),
-    )?.[1];
-    const conversation = context?.match(/\bconversationId:([A-Za-z_$][\w$]*)/u)?.[1];
-    const host = context?.match(/\bhostId:([A-Za-z_$][\w$]*)/u)?.[1];
-    const react = reactAliasAfter(source, range.end);
-    const action = original.match(/([A-Za-z_$][\w$]*)\.requestUserInputAutoResolution\.snooze/u)?.[1];
-    if (state == null || conversation == null || host == null || react == null || action == null) continue;
-
-    const [, , pending, , request, delimiter] = state;
-    const declaration =
-      `let codexLinuxKeepQuestionsOpen=${hook}(\`${SETTING_KEY}\`)?.data!==!1;` +
-      `(0,${react}.useEffect)(()=>{if(!codexLinuxKeepQuestionsOpen||${pending}==null||${pending}.resolutionState.status===\`snoozed\`)return;` +
-      `${action}.requestUserInputAutoResolution.snooze({conversationId:${conversation},hostId:${host},requestId:${request}.requestId})},` +
-      `[${conversation},${host},${request}.requestId,${pending},codexLinuxKeepQuestionsOpen]);/*${RUNTIME_MARKER}*/`;
-    let patched;
-    if (delimiter === ",") {
-      const end = state.index + state[0].length - 1;
-      patched = `${original.slice(0, end)};${declaration}let ${original.slice(end + 1)}`;
-    } else {
-      const end = original.indexOf(";", state.index);
-      if (end === -1) continue;
-      patched = `${original.slice(0, end + 1)}${declaration}${original.slice(end + 1)}`;
-    }
-    patched = patched
-      .replace(
-        new RegExp(`${escapeRegExp(pending)}(?:\\?\\.|\\.)resolutionState\\.status===\`scheduled\`\\?`, "gu"),
-        "!codexLinuxKeepQuestionsOpen&&$&",
-      )
-      .replace(
-        new RegExp(`${escapeRegExp(pending)}!=null&&${escapeRegExp(pending)}\\.resolutionState\\.status!==\`snoozed\`\\?`, "gu"),
-        "!codexLinuxKeepQuestionsOpen&&$&",
-      );
-    return source.replace(original, patched);
-  }
-  return source;
-}
-
-function patchTaskRow(source, hook) {
-  for (const range of functionRanges(source)) {
-    const original = source.slice(range.start, range.end);
-    if (
-      !original.includes("snoozeInputTimeout") ||
-      !original.includes("requestUserInputAutoResolution.snooze") ||
-      original.includes(RUNTIME_MARKER)
-    ) continue;
-    const scheduled = /([A-Za-z_$][\w$]*)\?\.resolutionState\.status===`scheduled`\?/gu;
-    if (!scheduled.test(original)) continue;
-    scheduled.lastIndex = 0;
-    const open = original.indexOf("{");
-    const patched = `${original.slice(0, open + 1)}let codexLinuxKeepQuestionsOpen=${hook}(\`${SETTING_KEY}\`)?.data!==!1;/*${RUNTIME_MARKER}*/${original.slice(open + 1)}`
-      .replace(scheduled, "!codexLinuxKeepQuestionsOpen&&$1?.resolutionState.status===`scheduled`?");
-    return source.replace(original, patched);
-  }
-  return source;
-}
-
 function applyKeepQuestionsOpenPatch(source, context = {}) {
   if (!enabled(context) || typeof source !== "string") return source;
-  const hook = globalStateHook(source);
-  if (hook == null) return source;
-  return patchTaskRow(patchStructuredQuestionFunction(source, hook), hook);
+  if (source.includes(RUNTIME_MARKER)) return source;
+  const pattern = /this\.trackRequest\(([\$A-Za-z_][\$A-Za-z0-9_]*),[^;]*?,`empty-user-input`\)/gu;
+  const matches = [...source.matchAll(pattern)];
+  if (matches.length !== 1) return source;
+  return source.replace(pattern, `this.removePendingRequest($1)/*${RUNTIME_MARKER}*/`);
+}
+
+function applyKeepQuestionsOpenRuntimePatch(extractedDir, context = {}) {
+  const buildDir = path.join(extractedDir, ".vite", "build");
+  if (!fs.existsSync(buildDir)) return { matched: 0, changed: 0, reason: "main build directory is missing", targets: [] };
+  const files = fs.readdirSync(buildDir).filter((name) => name.endsWith(".js"));
+  const current = files.filter((name) => /this\.trackRequest\([^;]{0,300},`empty-user-input`\)/u.test(fs.readFileSync(path.join(buildDir, name), "utf8")));
+  const patched = files.filter((name) => fs.readFileSync(path.join(buildDir, name), "utf8").includes(RUNTIME_MARKER));
+  if (current.length === 0 && patched.length === 1) {
+    return { matched: 1, changed: 0, reason: null, targets: [patched[0]] };
+  }
+  if (current.length !== 1 || patched.length !== 0) {
+    return { matched: 0, changed: 0, reason: `found ${current.length} current and ${patched.length} patched timer owners`, targets: [] };
+  }
+  const target = path.join(buildDir, current[0]);
+  const source = fs.readFileSync(target, "utf8");
+  const output = applyKeepQuestionsOpenPatch(source, context);
+  if (!output.includes(RUNTIME_MARKER)) {
+    return { matched: 0, changed: 0, reason: "current timer registration did not match", targets: [] };
+  }
+  fs.writeFileSync(target, output);
+  return { matched: 1, changed: 1, reason: null, targets: [current[0]] };
 }
 
 function settingsAliases(source, requestAsset) {
@@ -210,10 +131,9 @@ function applyKeepQuestionsOpenAppPatch(extractedDir, context = {}) {
   const assetsDir = path.join(extractedDir, "webview", "assets");
   if (!fs.existsSync(assetsDir)) return { matched: 0, changed: 0, reason: "webview assets directory is missing", targets: [] };
   const names = fs.readdirSync(assetsDir).sort();
-  const appMatches = names.filter((name) => /^app-initial-.*\.js$/.test(name) && fs.readFileSync(path.join(assetsDir, name), "utf8").includes("requestUserInputAutoResolution.snooze"));
   const settingsMatches = names.filter((name) => /^general-settings-.*\.js$/.test(name) && fs.readFileSync(path.join(assetsDir, name), "utf8").includes("slug:`general-settings`"));
-  if ((enabled(context) && appMatches.length !== 1) || settingsMatches.length !== 1) {
-    return { matched: 0, changed: 0, reason: `found ${appMatches.length} request and ${settingsMatches.length} settings assets`, targets: [] };
+  if (settingsMatches.length !== 1) {
+    return { matched: 0, changed: 0, reason: `found ${settingsMatches.length} settings assets`, targets: [] };
   }
   let requestAsset;
   try {
@@ -221,12 +141,10 @@ function applyKeepQuestionsOpenAppPatch(extractedDir, context = {}) {
   } catch (error) {
     return { matched: 0, changed: 0, reason: error.message, targets: [] };
   }
-  const targets = [...(enabled(context) ? [appMatches[0]] : []), settingsMatches[0]];
+  const targets = [settingsMatches[0]];
   const originals = targets.map((name) => fs.readFileSync(path.join(assetsDir, name), "utf8"));
-  const patched = targets.map((name, index) => name === settingsMatches[0]
-    ? applyKeepQuestionsOpenSettingsPatch(originals[index], requestAsset, context)
-    : applyKeepQuestionsOpenPatch(originals[index], context));
-  if ((enabled(context) && !patched[0].includes(RUNTIME_MARKER)) || !patched.at(-1).includes(SETTINGS_MARKER)) {
+  const patched = originals.map((source) => applyKeepQuestionsOpenSettingsPatch(source, requestAsset, context));
+  if (!patched[0].includes(SETTINGS_MARKER)) {
     return { matched: 0, changed: 0, reason: "current signed bundle seams did not match", targets: [] };
   }
   let changed = 0;
@@ -238,16 +156,29 @@ function applyKeepQuestionsOpenAppPatch(extractedDir, context = {}) {
   return { matched: targets.length, changed, reason: null, targets };
 }
 
-const descriptors = [{
-  id: "keep-questions-open",
-  phase: "extracted-app:post-webview",
-  order: 20_794,
-  ciPolicy: "optional",
-  apply: applyKeepQuestionsOpenAppPatch,
-  status: (result) => result?.matched >= 1
-    ? (result.changed > 0 ? "applied" : "already-applied")
-    : { status: "skipped-optional", reason: result?.reason ?? null },
-}];
+const descriptors = [
+  {
+    id: "keep-questions-open",
+    phase: "extracted-app:pre-webview",
+    order: 20_793,
+    ciPolicy: "optional",
+    enabled,
+    apply: applyKeepQuestionsOpenRuntimePatch,
+    status: (result) => result?.matched === 1
+      ? (result.changed > 0 ? "applied" : "already-applied")
+      : { status: "skipped-optional", reason: result?.reason ?? null },
+  },
+  {
+    id: "linux-revisions-settings",
+    phase: "extracted-app:post-webview",
+    order: 20_794,
+    ciPolicy: "optional",
+    apply: applyKeepQuestionsOpenAppPatch,
+    status: (result) => result?.matched === 1
+      ? (result.changed > 0 ? "applied" : "already-applied")
+      : { status: "skipped-optional", reason: result?.reason ?? null },
+  },
+];
 
 module.exports = {
   RUNTIME_MARKER,
@@ -255,6 +186,7 @@ module.exports = {
   SETTINGS_MARKER,
   applyKeepQuestionsOpenAppPatch,
   applyKeepQuestionsOpenPatch,
+  applyKeepQuestionsOpenRuntimePatch,
   applyKeepQuestionsOpenSettingsPatch,
   config,
   descriptors,

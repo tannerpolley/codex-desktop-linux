@@ -25,9 +25,16 @@ pub async fn run(cli: Cli) -> Result<()> {
     let config = RuntimeConfig::load_or_default(&paths)?;
     let mut state = PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
     let installed_version = install::installed_package_version();
-    reconcile_interrupted_install(&mut state, &installed_version);
+    let recovered_install = reconcile_interrupted_install(&mut state, &installed_version);
     state.installed_version = installed_version;
     state.save_updater(&paths.state_file)?;
+    if config.notifications {
+        if let Some(version) = recovered_install {
+            if let Err(error) = notify::send("codex-desktop updated", &format!("Installed {version}.")) {
+                error!(?error, "completion notification failed");
+            }
+        }
+    }
 
     match cli.command {
         Commands::Daemon => daemon(&config, &mut state, &paths).await,
@@ -89,19 +96,23 @@ fn sha256_file(path: &Path) -> Result<String> {
     Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn reconcile_interrupted_install(state: &mut PersistedState, installed_version: &str) {
+fn reconcile_interrupted_install(state: &mut PersistedState, installed_version: &str) -> Option<String> {
     if state.status != UpdateStatus::Installing
         || installed_version == "unknown"
         || installed_version == state.installed_version
     {
-        return;
+        return None;
     }
     if state.last_known_good_version.as_deref() == Some(installed_version)
         && state.artifact_paths.rollback_package_path.is_some()
     {
         rollback::complete_install(state, installed_version.to_string());
+        None
     } else if state.candidate_version.is_some() {
         complete_candidate_install(state, installed_version.to_string());
+        Some(installed_version.to_string())
+    } else {
+        None
     }
 }
 
@@ -333,19 +344,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn restart_after_package_upgrade_completes_candidate_state() {
+    fn restart_after_package_upgrade_requests_one_completion_notification() {
         let mut state = PersistedState::new(true);
         state.installed_version = "2026.08.27.100000".into();
         state.candidate_version = Some("26.820.71523".into());
         state.upstream_package_sha256 = Some("signed-sha".into());
         state.status = UpdateStatus::Installing;
 
-        reconcile_interrupted_install(&mut state, "2026.08.27.110000");
+        let notification = reconcile_interrupted_install(&mut state, "2026.08.27.110000");
 
+        assert_eq!(notification.as_deref(), Some("2026.08.27.110000"));
         assert_eq!(state.status, UpdateStatus::Installed);
         assert_eq!(state.installed_upstream_version.as_deref(), Some("26.820.71523"));
         assert_eq!(state.installed_upstream_sha256.as_deref(), Some("signed-sha"));
         assert_eq!(state.candidate_version, None);
+        assert_eq!(reconcile_interrupted_install(&mut state, "2026.08.27.110000"), None);
     }
 
     #[test]

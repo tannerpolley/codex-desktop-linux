@@ -12,6 +12,7 @@ pub struct Cli {
 pub enum Commands {
     Daemon,
     CheckNow,
+    RebuildCurrent,
     Status { #[arg(long)] json: bool },
     Diagnose { #[arg(long)] json: bool },
     InstallReady,
@@ -28,4 +29,15 @@ pub enum Commands {
     InstallRollbackRpm { #[arg(long)] path: PathBuf },
     #[command(hide = true)]
     InstallRollbackPacman { #[arg(long)] path: PathBuf },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_same_version_rebuild_command() {
+        let cli = Cli::try_parse_from(["codex-update-manager", "rebuild-current"]).unwrap();
+        assert!(matches!(cli.command, Commands::RebuildCurrent));
+    }
 }

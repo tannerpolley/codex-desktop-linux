@@ -23,12 +23,15 @@ pub async fn run(cli: Cli) -> Result<()> {
     logging::init(&paths.log_file)?;
     let config = RuntimeConfig::load_or_default(&paths)?;
     let mut state = PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
-    state.installed_version = install::installed_package_version();
+    let installed_version = install::installed_package_version();
+    reconcile_interrupted_install(&mut state, &installed_version);
+    state.installed_version = installed_version;
     state.save_updater(&paths.state_file)?;
 
     match cli.command {
         Commands::Daemon => daemon(&config, &mut state, &paths).await,
-        Commands::CheckNow => check(&config, &mut state, &paths).await,
+        Commands::CheckNow => check(&config, &mut state, &paths, false).await,
+        Commands::RebuildCurrent => check(&config, &mut state, &paths, true).await,
         Commands::Status { json } => status(&state, json),
         Commands::Diagnose { json } => diagnose(&config, &state, &paths, json),
         Commands::InstallReady => install_ready(&config, &mut state, &paths, true).await,
@@ -39,6 +42,22 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Commands::InstallRollbackDeb { .. }
         | Commands::InstallRollbackRpm { .. }
         | Commands::InstallRollbackPacman { .. } => unreachable!(),
+    }
+}
+
+fn reconcile_interrupted_install(state: &mut PersistedState, installed_version: &str) {
+    if state.status != UpdateStatus::Installing
+        || installed_version == "unknown"
+        || installed_version == state.installed_version
+    {
+        return;
+    }
+    if state.last_known_good_version.as_deref() == Some(installed_version)
+        && state.artifact_paths.rollback_package_path.is_some()
+    {
+        rollback::complete_install(state, installed_version.to_string());
+    } else if state.candidate_version.is_some() {
+        complete_candidate_install(state, installed_version.to_string());
     }
 }
 
@@ -56,7 +75,7 @@ fn run_privileged_command(command: &Commands) -> Option<Result<()>> {
 
 async fn daemon(config: &RuntimeConfig, state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
     time::sleep(config.initial_check_delay_duration()).await;
-    if let Err(error) = check(config, state, paths).await {
+    if let Err(error) = check(config, state, paths, false).await {
         error!(?error, "initial update check failed");
     }
     let mut checks = time::interval(config.check_interval_duration());
@@ -65,9 +84,12 @@ async fn daemon(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runt
     reconcile.tick().await;
     loop {
         tokio::select! {
-            _ = checks.tick() => if let Err(error) = check(config, state, paths).await { error!(?error, "periodic update check failed"); },
-            _ = reconcile.tick() => if state.status == UpdateStatus::WaitingForAppExit && !liveness::is_app_running(config)? {
-                if let Err(error) = install_ready(config, state, paths, false).await { error!(?error, "deferred install failed"); }
+            _ = checks.tick() => if let Err(error) = check(config, state, paths, false).await { error!(?error, "periodic update check failed"); },
+            _ = reconcile.tick() => {
+                if let Ok(latest) = PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit) { *state = latest; }
+                if state.status == UpdateStatus::WaitingForAppExit && !liveness::is_app_running(config)? {
+                    if let Err(error) = install_ready(config, state, paths, false).await { error!(?error, "deferred install failed"); }
+                }
             },
             signal = tokio::signal::ctrl_c() => { signal?; break; }
         }
@@ -75,7 +97,7 @@ async fn daemon(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runt
     Ok(())
 }
 
-async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &RuntimePaths) -> Result<()> {
+async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &RuntimePaths, force_rebuild: bool) -> Result<()> {
     let _lock = match CheckLock::try_acquire(&paths.state_dir.join("check.lock"))? {
         Some(lock) => lock,
         None => { info!("another update check is active"); return Ok(()); }
@@ -103,7 +125,7 @@ async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runti
     let already_installed = state.installed_upstream_version.as_deref() == Some(metadata.version.as_str())
         && state.installed_upstream_sha256.as_deref() == Some(metadata.sha256.as_str())
         && state.candidate_version.is_none();
-    if already_installed || same_failed_candidate {
+    if !force_rebuild && (already_installed || same_failed_candidate) {
         state.status = if same_failed_candidate { UpdateStatus::Failed } else { UpdateStatus::Idle };
         if same_failed_candidate { state.error_message = previous_error; }
         state.save_updater(&paths.state_file)?;
@@ -188,11 +210,19 @@ async fn install_ready(
         ));
     }
 
-    let installed_upstream_version = state.candidate_version.clone();
-    let installed_upstream_sha256 = state.upstream_package_sha256.clone();
-    state.installed_version = install::installed_package_version();
-    state.installed_upstream_version = installed_upstream_version;
-    state.installed_upstream_sha256 = installed_upstream_sha256;
+    complete_candidate_install(state, install::installed_package_version());
+    state.save_updater(&paths.state_file)?;
+    let _ = cache_cleanup::prune(&paths.cache_dir, state);
+    if config.notifications {
+        let _ = notify::send("codex-desktop updated", &format!("Installed {}.", state.installed_version));
+    }
+    Ok(())
+}
+
+fn complete_candidate_install(state: &mut PersistedState, installed_version: String) {
+    state.installed_version = installed_version;
+    state.installed_upstream_version = state.candidate_version.clone();
+    state.installed_upstream_sha256 = state.upstream_package_sha256.clone();
     state.status = UpdateStatus::Installed;
     state.last_known_good_version.get_or_insert_with(|| state.installed_version.clone());
     state.candidate_version = None;
@@ -200,12 +230,6 @@ async fn install_ready(
     state.candidate_repository_path = None;
     state.waiting_for_app_exit_auto_install = false;
     state.error_message = None;
-    state.save_updater(&paths.state_file)?;
-    let _ = cache_cleanup::prune(&paths.cache_dir, state);
-    if config.notifications {
-        let _ = notify::send("codex-desktop updated", &format!("Installed {}.", state.installed_version));
-    }
-    Ok(())
 }
 
 fn fail<T>(state: &mut PersistedState, paths: &RuntimePaths, error: anyhow::Error) -> Result<T> {
@@ -259,3 +283,56 @@ impl CheckLock {
     }
 }
 impl Drop for CheckLock { fn drop(&mut self) { let _ = self.0.unlock(); } }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_after_package_upgrade_completes_candidate_state() {
+        let mut state = PersistedState::new(true);
+        state.installed_version = "2026.08.27.100000".into();
+        state.candidate_version = Some("26.820.71523".into());
+        state.upstream_package_sha256 = Some("signed-sha".into());
+        state.status = UpdateStatus::Installing;
+
+        reconcile_interrupted_install(&mut state, "2026.08.27.110000");
+
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert_eq!(state.installed_upstream_version.as_deref(), Some("26.820.71523"));
+        assert_eq!(state.installed_upstream_sha256.as_deref(), Some("signed-sha"));
+        assert_eq!(state.candidate_version, None);
+    }
+
+    #[test]
+    fn unchanged_installed_version_does_not_claim_success() {
+        let mut state = PersistedState::new(true);
+        state.installed_version = "2026.08.27.100000".into();
+        state.candidate_version = Some("26.820.71523".into());
+        state.status = UpdateStatus::Installing;
+
+        reconcile_interrupted_install(&mut state, "2026.08.27.100000");
+
+        assert_eq!(state.status, UpdateStatus::Installing);
+        assert_eq!(state.candidate_version.as_deref(), Some("26.820.71523"));
+    }
+
+    #[test]
+    fn restart_after_rollback_restores_known_good_state() {
+        let mut state = PersistedState::new(true);
+        state.installed_version = "2026.08.27.110000".into();
+        state.installed_upstream_version = Some("26.820.71523".into());
+        state.candidate_version = Some("26.821.10000".into());
+        state.last_known_good_version = Some("2026.08.27.100000".into());
+        state.last_known_good_upstream_version = Some("26.819.90000".into());
+        state.artifact_paths.rollback_package_path = Some("known-good.deb".into());
+        state.status = UpdateStatus::Installing;
+
+        reconcile_interrupted_install(&mut state, "2026.08.27.100000");
+
+        assert_eq!(state.status, UpdateStatus::Installed);
+        assert_eq!(state.installed_upstream_version.as_deref(), Some("26.819.90000"));
+        assert_eq!(state.candidate_version, None);
+        assert_eq!(state.artifact_paths.package_path, Some("known-good.deb".into()));
+    }
+}

@@ -130,6 +130,7 @@ test("adds all Linux revision settings and patches extracted assets atomically",
     assert.match(settings, new RegExp(SETTINGS_MARKER));
     assert.match(settings, /Linux revisions/);
     assert.match(settings, /Keep questions open/);
+    assert.match(settings, /Complete question sets/);
     assert.match(settings, /Order skill mentions/);
     assert.match(settings, /Dock icon controls/);
     assert.match(settings, /Extended UI font size/);

@@ -10,6 +10,7 @@ const RUNTIME_MARKER = "codex-linux-disable-empty-user-input-auto-resolution";
 const SETTINGS_MARKER = "codex-linux-revisions-settings";
 const REVISION_DEFINITIONS = [
   ["composer.keepQuestionsOpen", "Keep questions open", "Wait for an explicit answer or interruption instead of automatically submitting an empty answer."],
+  ["composer.expandedNativeInputChoices", "Complete question sets", "Let agents include every useful question and mutually exclusive choice in one native request."],
   ["composer.skillMentionOrdering", "Order skill mentions", "Group namespaced skills together and sort matches by display name."],
   ["appearance.dockIcon", "Dock icon controls", "Expose and synchronize the ChatGPT Community dock and tray icon controls."],
   ["appearance.uiFontSize", "Extended UI font size", "Raise the upstream UI font-size limit to the configured Linux maximum."],

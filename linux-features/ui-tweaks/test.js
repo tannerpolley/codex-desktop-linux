@@ -11,6 +11,7 @@ require("./suggested-prompts.test.js");
 require("./dock-icon.test.js");
 require("./skill-mention-ordering.test.js");
 require("./keep-questions-open.test.js");
+require("./native-input-guidance.test.js");
 require("./linux-revisions-bridge.test.js");
 
 const {

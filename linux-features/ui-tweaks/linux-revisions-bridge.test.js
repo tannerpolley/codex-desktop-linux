@@ -41,9 +41,10 @@ test("adds the revisions handler after the Issues bridge", () => {
   assert.doesNotThrow(() => new vm.Script(patched));
 });
 
-test("generated main bridge allow-lists all eight revisions", () => {
+test("generated main bridge allow-lists all nine revisions", () => {
   const source = mainBridgeSource("electron.ipcMain", "isTrusted");
   assert.equal((source.match(/keepQuestionsOpen/g) ?? []).length > 0, true);
+  assert.equal((source.match(/expandedNativeInputChoices/g) ?? []).length > 0, true);
   assert.equal((source.match(/projectName/g) ?? []).length > 0, true);
   assert.match(source, /features\.json/);
   assert.match(source, /codex-update-manager/);

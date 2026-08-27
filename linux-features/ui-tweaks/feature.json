@@ -21,6 +21,9 @@
       },
       "skillMentionOrdering": {
         "enabled": false
+      },
+      "expandedNativeInputChoices": {
+        "enabled": false
       }
     },
     "appearance": {

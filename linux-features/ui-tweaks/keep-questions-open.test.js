@@ -9,6 +9,16 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
+function assertModuleSyntax(filePath) {
+  const syntax = spawnSync(process.execPath, [
+    "--experimental-vm-modules",
+    "-e",
+    "new (require('node:vm').SourceTextModule)(require('node:fs').readFileSync(process.argv[1], 'utf8'))",
+    filePath,
+  ], { encoding: "utf8" });
+  assert.equal(syntax.status, 0, syntax.stderr);
+}
+
 const featureManifest = require("./feature.json");
 const {
   RUNTIME_MARKER,
@@ -143,6 +153,7 @@ test("adds all Linux revision settings and patches extracted assets atomically",
     assert.match(settings, /get-global-state/);
     assert.match(settings, /set-global-state/);
     assert.match(settings, /codex-linux-disable-request-user-input-auto-resolution/);
+    assertModuleSyntax(path.join(fixture.assetsDir, "general-settings-fixture.js"));
     assert.deepEqual(applyKeepQuestionsOpenAppPatch(fixture.extractedDir, enabledContext()), {
       matched: 1,
       changed: 0,
@@ -162,6 +173,24 @@ test("reuses the settings chunk's existing host-request import", () => {
     const settings = fs.readFileSync(path.join(fixture.assetsDir, "general-settings-fixture.js"), "utf8");
     assert.doesNotMatch(settings, /import\("\.\/app-initial-fixture\.js"\)/);
     assert.match(settings, /rq\(`get-global-state`/);
+  } finally {
+    fs.rmSync(fixture.extractedDir, { recursive: true, force: true });
+  }
+});
+
+test("keeps the patched settings module valid when the host request alias is n", () => {
+  const fixture = createExtractedApp(
+    appInitialFixture(),
+    generalSettingsFixture().replace("$Pt as rq", "$Pt as n"),
+  );
+  try {
+    const result = applyKeepQuestionsOpenAppPatch(fixture.extractedDir, enabledContext());
+    assert.equal(result.matched, 1, JSON.stringify(result));
+    const settingsPath = path.join(fixture.assetsDir, "general-settings-fixture.js");
+    assertModuleSyntax(settingsPath);
+    const settings = fs.readFileSync(settingsPath, "utf8");
+    assert.match(settings, /n\(`get-global-state`/);
+    assert.doesNotMatch(settings, /let\[n,r\]=/);
   } finally {
     fs.rmSync(fixture.extractedDir, { recursive: true, force: true });
   }
@@ -207,8 +236,7 @@ test("matches the current signed official bundle when provided", { skip: process
     assert.match(app, /replyWithUserInputResponse/);
     assert.match(fs.readFileSync(settingsPath, "utf8"), new RegExp(SETTINGS_MARKER));
     for (const target of [mainPath, appPath, settingsPath]) {
-      const syntax = spawnSync(process.execPath, ["--check", target], { encoding: "utf8" });
-      assert.equal(syntax.status, 0, syntax.stderr);
+      assertModuleSyntax(target);
     }
   } finally {
     fs.rmSync(fixture.extractedDir, { recursive: true, force: true });

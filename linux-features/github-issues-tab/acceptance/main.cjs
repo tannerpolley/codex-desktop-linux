@@ -1,50 +1,41 @@
 "use strict";
 
-const fs = require("node:fs");
-const os = require("node:os");
+const { pathToFileURL } = require("node:url");
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
 
-const profile = fs.mkdtempSync(path.join(os.tmpdir(), "codex-issues-electron-"));
-app.setPath("userData", profile);
-app.commandLine.appendSwitch("disable-gpu");
-app.on("quit", () => fs.rmSync(profile, { recursive: true, force: true }));
+const renderer = pathToFileURL(path.join(__dirname, "..", "renderer.mjs")).href;
 
-async function waitFor(window, expression, description) {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    if (await window.webContents.executeJavaScript(expression, true)) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+async function waitFor(window, expression) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (await window.webContents.executeJavaScript(expression)) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`Timed out waiting for ${description}`);
+  throw new Error(`Timed out waiting for ${expression}`);
 }
 
 app.whenReady().then(async () => {
   const errors = [];
-  const window = new BrowserWindow({
-    show: false,
-    width: 1000,
-    height: 720,
-    webPreferences: { contextIsolation: false, nodeIntegration: true, sandbox: false },
-  });
-  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  window.webContents.on("console-message", (_event, ...args) => {
-    const [details, legacyMessage] = args;
-    const level = typeof details === "object" ? details.level : details;
-    const message = typeof details === "object" ? details.message : legacyMessage;
-    if (level === "error" || level === 3) errors.push(String(message));
-  });
-  window.webContents.on("render-process-gone", (_event, details) => errors.push(`renderer gone: ${details.reason}`));
-  window.webContents.on("did-fail-load", (_event, code, description) => errors.push(`load failed ${code}: ${description}`));
-
+  const window = new BrowserWindow({ show: false, webPreferences: { contextIsolation: false, nodeIntegration: true } });
+  window.webContents.on("console-message", (_event, level, message) => { if (level >= 2) errors.push(message); });
   await window.loadFile(path.join(__dirname, "index.html"));
-  await waitFor(window, 'document.querySelector("button[aria-label^=\\"Issue #\\"]") !== null', "the fixture issue list");
-  await window.webContents.executeJavaScript('document.querySelector("button[aria-label^=\\"Issue #\\"]").click()');
-  await waitFor(window, 'document.querySelector("section[aria-label=\\"Issue detail\\"] article h2")?.textContent.includes("issue rows should stay readable") === true', "the selected issue detail");
-  await waitFor(window, 'document.querySelector("section[aria-label=\\"Issue timeline\\"]")?.textContent.includes("card remains visible") === true', "the issue timeline");
-  if (errors.length > 0) throw new Error(`Renderer errors:\n${errors.join("\n")}`);
-  console.log("GitHub Issues Electron acceptance passed: list, detail, timeline, no renderer errors");
-  app.exit(0);
+  await window.webContents.executeJavaScript(`
+    window.electronBridge={githubIssues:{request:async request=>{
+      const issue={id:'I_7',number:7,title:'Acceptance issue',url:'https://github.com/a/b/issues/7',state:'OPEN',body:'Issue body',author:'octocat',repository:'a/b',labels:[{name:'bug',color:'f00'}],assignees:['octocat'],commentCount:1,comments:[{id:'C_1',body:'Issue comment',createdAt:'2026-01-01T00:00:00Z',author:'hubot'}]};
+      const data=request.operation==='capabilities'?{host:'github.com',login:'octocat'}:request.operation==='listIssues'?{host:'github.com',login:'octocat',issues:[issue],pageInfo:{hasNextPage:false,endCursor:null}}:{issue};
+      return {version:1,requestId:request.requestId,ok:true,data,error:null};
+    }}};
+    const React=require('react');
+    const ReactDOM=require('react-dom/client');
+    import(${JSON.stringify(renderer)}).then(module=>ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(module.createIssuesRoute({React}))));
+  `);
+  await waitFor(window, "document.querySelector('[data-testid=\"issue-7\"]')!==null");
+  await window.webContents.executeJavaScript("document.querySelector('[data-testid=\"issue-7\"]').click()");
+  await waitFor(window, "document.querySelector('[data-testid=\"issue-detail\"]')?.textContent.includes('Issue comment')===true");
+  if (errors.length) throw new Error(errors.join("\n"));
+  console.log("GitHub Issues renderer acceptance passed");
+  window.destroy();
+  app.quit();
 }).catch((error) => {
   console.error(error);
   app.exit(1);

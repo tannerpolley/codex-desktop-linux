@@ -3,6 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 
 function walkModules(root) {
   const modules = [];
@@ -51,6 +52,24 @@ function verifyAppProtocolImports(extractedAppDir) {
   }
 }
 
+function invalidPatchedModuleSyntax(extractedAppDir) {
+  const webviewRoot = path.join(path.resolve(extractedAppDir), "webview");
+  const invalid = [];
+  for (const modulePath of walkModules(webviewRoot)) {
+    const source = fs.readFileSync(modulePath, "utf8");
+    const isStagedRootModule = path.dirname(modulePath) === webviewRoot && modulePath.endsWith(".mjs");
+    if (!isStagedRootModule && !/(?:codex-linux|codexLinux)/u.test(source)) continue;
+    const result = spawnSync(process.execPath, ["--input-type=module", "--check"], { encoding: "utf8", input: source });
+    if (result.status !== 0) invalid.push({ module: path.relative(extractedAppDir, modulePath), error: result.stderr.trim() });
+  }
+  return invalid;
+}
+
+function verifyPatchedModuleSyntax(extractedAppDir) {
+  const invalid = invalidPatchedModuleSyntax(extractedAppDir);
+  if (invalid.length > 0) throw new Error(`Invalid patched webview modules:\n${invalid.map(({ module, error }) => `  ${module}: ${error}`).join("\n")}`);
+}
+
 if (require.main === module) {
   const extractedAppDir = process.argv[2];
   if (!extractedAppDir) {
@@ -61,4 +80,4 @@ if (require.main === module) {
   console.log("Static app:// import closure passed");
 }
 
-module.exports = { missingAppProtocolImports, staticAppImports, verifyAppProtocolImports };
+module.exports = { invalidPatchedModuleSyntax, missingAppProtocolImports, staticAppImports, verifyAppProtocolImports, verifyPatchedModuleSyntax };

@@ -1,11 +1,11 @@
 {
   "id": "github-issues-tab",
-  "title": "GitHub Issues Tab",
-  "description": "Local read-only GitHub Issues inbox and timeline from the Pinned Summary Environment section.",
+  "title": "GitHub Issues",
+  "description": "Account-wide GitHub Issues inbox beside the upstream Pull Requests inbox.",
   "defaultEnabled": false,
   "entrypoints": { "patchDescriptors": "./patch.js" },
   "resources": [
-    { "source": "issues-adapter.js", "target": ".codex-linux/features/github-issues-tab/issues-adapter.js", "mode": "0644" },
+    { "source": "issues-adapter.js", "target": ".codex-linux/features/github-issues-tab/issues-adapter.js", "mode": "0755" },
     { "source": "protocol.js", "target": ".codex-linux/features/github-issues-tab/protocol.js", "mode": "0644" }
   ]
 }

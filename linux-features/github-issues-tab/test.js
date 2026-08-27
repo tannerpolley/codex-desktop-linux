@@ -296,6 +296,8 @@ test("current official Linux Issues patches are transactional and idempotent", (
     assert.match(summarySource, /onOpenIssuesSidePanel/);
     assert.match(summarySource, /Issues/);
     assert.match(sidePanelSource, new RegExp(ISSUES_SIDE_PANEL_MARKER));
+    assert.match(sidePanelSource, /let codexLinuxGithubIssuesPanel;function codexLinuxGithubOpenIssuesSidePanel\(scope,options=\{\}\)\{codexLinuxGithubIssuesPanel\?\?=/);
+    assert.doesNotMatch(sidePanelSource, /const codexLinuxGithubIssuesPanel=.*\.lazy\(/);
     assert.match(sidePanelSource, /id:`issues`|id:\"issues\"/);
     assert.match(sidePanelSource, /createIssuesSidePanel/);
     assert.equal((functionSlice(summarySource, "TC").match(/onOpenIssuesSidePanel:codexLinuxIssuesOpen/g) ?? []).length, 1);
@@ -425,7 +427,9 @@ test("current Linux summary and side-panel bundles use the modern hashed shape",
     assert.match(sidePanel, new RegExp(ISSUES_SIDE_PANEL_MARKER));
     assert.match(sidePanel, /export\{q as r,codexLinuxGithubOpenIssuesSidePanel as h\}/);
     assert.doesNotThrow(() => new vm.Script(summary));
-    assert.doesNotThrow(() => new vm.Script(sidePanel.replace(/export\{[^}]*\};$/u, "")));
+    const executableSidePanel = sidePanel.replace(/export\{[^}]*\};$/u, "");
+    assert.doesNotThrow(() => new vm.Script(executableSidePanel));
+    assert.doesNotThrow(() => vm.runInNewContext(executableSidePanel, { e: (initializer) => initializer }));
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

@@ -40,7 +40,9 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Daemon => daemon(&config, &mut state, &paths).await,
         Commands::CheckNow => check(&config, &mut state, &paths, false).await,
         Commands::RebuildCurrent => check(&config, &mut state, &paths, true).await,
-        Commands::QueuePackage { path } => queue_package(&config, &mut state, &paths, &path).await,
+        Commands::QueuePackage { path, upstream_version, upstream_sha256 } => {
+            queue_package(&config, &mut state, &paths, &path, upstream_version, upstream_sha256).await
+        }
         Commands::Status { json } => status(&state, json),
         Commands::Diagnose { json } => diagnose(&config, &state, &paths, json),
         Commands::InstallReady => install_ready(&config, &mut state, &paths, true).await,
@@ -59,6 +61,8 @@ async fn queue_package(
     state: &mut PersistedState,
     paths: &RuntimePaths,
     package: &Path,
+    upstream_version: Option<String>,
+    upstream_sha256: Option<String>,
 ) -> Result<()> {
     let stable = install::stable_validated_package(package)?;
     install::ensure_upgrade_path_for_current_platform(stable.path())?;
@@ -69,11 +73,12 @@ async fn queue_package(
     fs::copy(stable.path(), &queued)
         .with_context(|| format!("Failed to queue {}", package.display()))?;
 
+    let (candidate_version, candidate_sha256) = queued_upstream_metadata(state, upstream_version, upstream_sha256)?;
     rollback::record_current_package_as_known_good(state);
-    state.candidate_version = state.installed_upstream_version.clone();
+    state.candidate_version = candidate_version;
     state.candidate_architecture = None;
     state.candidate_repository_path = None;
-    state.upstream_package_sha256 = state.installed_upstream_sha256.clone();
+    state.upstream_package_sha256 = candidate_sha256;
     state.artifact_paths.package_path = Some(queued.clone());
     state.status = UpdateStatus::ReadyToInstall;
     state.error_message = None;
@@ -82,6 +87,22 @@ async fn queue_package(
         let _ = notify::send("codex-desktop update ready", "A locally verified ChatGPT Community package is ready.");
     }
     install_ready(config, state, paths, false).await
+}
+
+fn queued_upstream_metadata(
+    state: &PersistedState,
+    version: Option<String>,
+    sha256: Option<String>,
+) -> Result<(Option<String>, Option<String>)> {
+    match (version, sha256) {
+        (None, None) => Ok((state.installed_upstream_version.clone(), state.installed_upstream_sha256.clone())),
+        (Some(version), Some(sha256)) => {
+            anyhow::ensure!(!version.is_empty() && version.len() <= 128 && version.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".+:~-".contains(&byte)), "invalid upstream version");
+            anyhow::ensure!(sha256.len() == 64 && sha256.bytes().all(|byte| byte.is_ascii_hexdigit()), "invalid upstream SHA-256");
+            Ok((Some(version), Some(sha256.to_ascii_lowercase())))
+        }
+        _ => unreachable!("clap requires upstream metadata as a pair"),
+    }
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
@@ -342,6 +363,32 @@ impl Drop for CheckLock { fn drop(&mut self) { let _ = self.0.unlock(); } }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_local_package_metadata_replaces_the_installed_upstream_identity() {
+        let mut state = PersistedState::new(true);
+        state.installed_upstream_version = Some("26.820.71523".into());
+        state.installed_upstream_sha256 = Some("a".repeat(64));
+        let metadata = queued_upstream_metadata(
+            &state,
+            Some("26.820.80927".into()),
+            Some("09EFDCd0651fda2aaa3457a1b0929504a5de8ebcc4e629ed8cfebe34e98a49f8".into()),
+        )
+        .unwrap();
+        assert_eq!(metadata.0.as_deref(), Some("26.820.80927"));
+        assert_eq!(metadata.1.as_deref(), Some("09efdcd0651fda2aaa3457a1b0929504a5de8ebcc4e629ed8cfebe34e98a49f8"));
+    }
+
+    #[test]
+    fn local_same_upstream_rebuild_keeps_installed_metadata() {
+        let mut state = PersistedState::new(true);
+        state.installed_upstream_version = Some("26.820.71523".into());
+        state.installed_upstream_sha256 = Some("a".repeat(64));
+        assert_eq!(
+            queued_upstream_metadata(&state, None, None).unwrap(),
+            (state.installed_upstream_version.clone(), state.installed_upstream_sha256.clone()),
+        );
+    }
 
     #[test]
     fn restart_after_package_upgrade_requests_one_completion_notification() {

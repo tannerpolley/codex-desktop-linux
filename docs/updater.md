@@ -57,6 +57,7 @@ codex-update-manager diagnose --json
 codex-update-manager check-now
 codex-update-manager rebuild-current
 codex-update-manager queue-package --path /path/to/codex-desktop_<version>_<arch>.deb
+codex-update-manager queue-package --path /path/to/codex-desktop_<version>_<arch>.deb --upstream-version <version> --upstream-sha256 <sha256>
 codex-update-manager install-ready
 codex-update-manager rollback
 ```
@@ -71,7 +72,8 @@ codex-update-manager rollback
   Linux revisions settings page uses this after saving feature choices.
 - `queue-package` validates and stages an already-built local `codex-desktop`
   package, then follows the same running-app guard and automatic install-on-exit
-  path as a signed upstream rebuild.
+  path as a signed upstream rebuild. Include the paired upstream version and
+  SHA-256 for a newer upstream release; omit them for a same-release rebuild.
 - `install-ready` retries installation of an already prepared candidate after
   the application is closed or a package-manager problem is fixed.
 - `rollback` installs the immediately previous retained managed package and

@@ -10,7 +10,8 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use chrono::Utc;
-use std::{fs::{self, OpenOptions}, path::Path, time::Duration};
+use sha2::{Digest, Sha256};
+use std::{fs::{self, OpenOptions}, io::Read, path::Path, time::Duration};
 use tokio::time;
 use tracing::{error, info};
 
@@ -32,6 +33,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Commands::Daemon => daemon(&config, &mut state, &paths).await,
         Commands::CheckNow => check(&config, &mut state, &paths, false).await,
         Commands::RebuildCurrent => check(&config, &mut state, &paths, true).await,
+        Commands::QueuePackage { path } => queue_package(&config, &mut state, &paths, &path).await,
         Commands::Status { json } => status(&state, json),
         Commands::Diagnose { json } => diagnose(&config, &state, &paths, json),
         Commands::InstallReady => install_ready(&config, &mut state, &paths, true).await,
@@ -43,6 +45,48 @@ pub async fn run(cli: Cli) -> Result<()> {
         | Commands::InstallRollbackRpm { .. }
         | Commands::InstallRollbackPacman { .. } => unreachable!(),
     }
+}
+
+async fn queue_package(
+    config: &RuntimeConfig,
+    state: &mut PersistedState,
+    paths: &RuntimePaths,
+    package: &Path,
+) -> Result<()> {
+    let stable = install::stable_validated_package(package)?;
+    install::ensure_upgrade_path_for_current_platform(stable.path())?;
+    let digest = sha256_file(stable.path())?;
+    let extension = stable.path().file_name().and_then(|name| name.to_str()).unwrap_or("package");
+    let queued = paths.cache_dir.join("candidates").join(format!("{digest}-{extension}"));
+    if let Some(parent) = queued.parent() { fs::create_dir_all(parent)?; }
+    fs::copy(stable.path(), &queued)
+        .with_context(|| format!("Failed to queue {}", package.display()))?;
+
+    rollback::record_current_package_as_known_good(state);
+    state.candidate_version = state.installed_upstream_version.clone();
+    state.candidate_architecture = None;
+    state.candidate_repository_path = None;
+    state.upstream_package_sha256 = state.installed_upstream_sha256.clone();
+    state.artifact_paths.package_path = Some(queued.clone());
+    state.status = UpdateStatus::ReadyToInstall;
+    state.error_message = None;
+    state.save_updater(&paths.state_file)?;
+    if config.notifications {
+        let _ = notify::send("codex-desktop update ready", "A locally verified ChatGPT Community package is ready.");
+    }
+    install_ready(config, state, paths, false).await
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 { break; }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn reconcile_interrupted_install(state: &mut PersistedState, installed_version: &str) {

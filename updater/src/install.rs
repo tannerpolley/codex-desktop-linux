@@ -498,6 +498,22 @@ fn ensure_upgrade_path_rpm(path: &Path) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn ensure_upgrade_path_for_current_platform(path: &Path) -> Result<()> {
+    let candidate_kind = PackageKind::from_path(path);
+    let installed_kind = PackageKind::detect();
+    anyhow::ensure!(
+        candidate_kind == installed_kind,
+        "Refusing to queue a {:?} package on a {:?} installation",
+        candidate_kind,
+        installed_kind
+    );
+    match candidate_kind {
+        PackageKind::Deb => ensure_upgrade_path(path),
+        PackageKind::Rpm => ensure_upgrade_path_rpm(path),
+        PackageKind::Pacman => ensure_upgrade_path_pacman(path),
+    }
+}
+
 fn apt_install_command(path: &Path) -> Result<Command> {
     install_command_in_parent(&program_path(APT_CANDIDATES, "apt"), path)
 }

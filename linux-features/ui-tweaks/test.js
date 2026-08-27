@@ -10,6 +10,8 @@ const test = require("node:test");
 require("./suggested-prompts.test.js");
 require("./dock-icon.test.js");
 require("./skill-mention-ordering.test.js");
+require("./keep-questions-open.test.js");
+require("./linux-revisions-bridge.test.js");
 
 const {
   discoverLinuxFeatureManifests,
@@ -203,11 +205,16 @@ function applyPatchTwice(source, context) {
 
 function copyFeatureTo(featuresRoot) {
   const featureDir = path.join(featuresRoot, "ui-tweaks");
+  const patchLibDir = path.join(featuresRoot, "..", "scripts", "patches", "lib");
   fs.mkdirSync(featureDir, { recursive: true });
+  fs.mkdirSync(patchLibDir, { recursive: true });
   for (const name of ["feature.json", "README.md", "patch.js"]) {
     fs.copyFileSync(path.join(__dirname, name), path.join(featureDir, name));
   }
   fs.cpSync(path.join(__dirname, "patches"), path.join(featureDir, "patches"), { recursive: true });
+  for (const name of ["assets.js", "minified-js.js"]) {
+    fs.copyFileSync(path.join(__dirname, "..", "..", "scripts", "patches", "lib", name), path.join(patchLibDir, name));
+  }
 }
 
 function withCapturedWarns(fn) {
@@ -265,6 +272,9 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:home-suggested-prompts-app-page", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
+        ["feature:ui-tweaks:linux-revisions-main-bridge", "main-bundle", "optional"],
+        ["feature:ui-tweaks:linux-revisions-preload-bridge", "extracted-app:post-webview", "optional"],
+        ["feature:ui-tweaks:keep-questions-open", "extracted-app:post-webview", "optional"],
       ],
     );
     const modelPickerDescriptors = descriptors.filter((descriptor) =>

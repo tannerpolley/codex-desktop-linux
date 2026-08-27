@@ -7,6 +7,8 @@ const modelPickerModelList = require("./patches/model-picker-model-list.js");
 const reasoningEffortLabels = require("./patches/reasoning-effort-labels.js");
 const dockIcon = require("./patches/dock-icon.js");
 const suggestedPrompts = require("./patches/suggested-prompts.js");
+const keepQuestionsOpen = require("./patches/keep-questions-open.js");
+const linuxRevisionsBridge = require("./patches/linux-revisions-bridge.js");
 
 function patchesFrom(...modules) {
   return modules.flatMap((moduleExports) =>
@@ -23,5 +25,7 @@ module.exports = {
     reasoningEffortLabels,
     dockIcon,
     suggestedPrompts,
+    linuxRevisionsBridge,
+    keepQuestionsOpen,
   ),
 };

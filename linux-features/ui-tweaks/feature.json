@@ -16,6 +16,9 @@
   },
   "tweaks": {
     "composer": {
+      "keepQuestionsOpen": {
+        "enabled": false
+      },
       "skillMentionOrdering": {
         "enabled": false
       }

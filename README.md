@@ -363,7 +363,7 @@ Full guide: [Troubleshooting](docs/troubleshooting.md).
 ## Project documentation
 
 - Getting started: [Native setup](docs/native-setup.md), [Build and packaging](docs/build-and-packaging.md), [Nix](docs/nix.md), [Raspberry Pi 5](docs/raspberry-pi-5.md)
-- Runtime and maintenance: [Architecture](docs/architecture.md), [Updater](docs/updater.md), [Troubleshooting](docs/troubleshooting.md)
+- Runtime and maintenance: [Architecture](docs/architecture.md), [Updater](docs/updater.md), [Personal fork workflow](docs/personal-fork-workflow.md), [Troubleshooting](docs/troubleshooting.md)
 - Extensions: [Feature framework](linux-features/README.md), [Feature architecture](docs/linux-features-architecture.md), [Linux Computer Use](docs/linux-computer-use.md), [Record and Replay](docs/record-and-replay-linux.md), [Chronicle / Skysight](docs/linux-chronicle-skysight.md)
 - Contributors: [Contributing](CONTRIBUTING.md), [Agent instructions](AGENTS.md), [Repository map](docs/agents/repository-map.md), [Validation playbook](docs/agents/validation-playbook.md), [Generated/runtime notes](docs/agents/generated-and-runtime-notes.md)
 - Project operations: [GitHub CLI auth](docs/github-cli-auth.md), [Label governance](docs/label-governance.md)

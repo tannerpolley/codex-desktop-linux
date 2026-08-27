@@ -6,9 +6,20 @@ const {
   applyMainBridgePatch,
   applyPreloadBridgePatch,
 } = require("./bridge-source.js");
+const { extractedAppPatch } = require("../../scripts/patches/descriptor.js");
 const { findCodexRequestWebviewAsset } = require("../../scripts/patches/lib/assets.js");
 
 const GITHUB_ISSUES_SETTING_KEY = "codex-linux-github-issues-enabled";
+
+function stageIssuesRenderer(extractedDir) {
+  const target = path.join(extractedDir, "webview", "github-issues-tab.mjs");
+  const source = fs.readFileSync(path.join(__dirname, "renderer.mjs"));
+  if (fs.existsSync(target) && fs.readFileSync(target).equals(source)) {
+    return { changed: 0, target: "webview/github-issues-tab.mjs" };
+  }
+  fs.writeFileSync(target, source);
+  return { changed: 1, target: "webview/github-issues-tab.mjs" };
+}
 
 function walkJavaScriptFiles(root) {
   if (!fs.existsSync(root)) return [];
@@ -608,10 +619,17 @@ const descriptors = [
     ciPolicy: "optional",
     apply: applyMainBridgePatch,
   },
+  extractedAppPatch({
+    id: "github-issues-renderer-module",
+    phase: "extracted-app:post-webview",
+    order: 20_931,
+    ciPolicy: "optional",
+    apply: stageIssuesRenderer,
+  }),
   {
     id: "github-issues-preload-bridge",
     phase: "extracted-app:post-webview",
-    order: 20_931,
+    order: 20_932,
     ciPolicy: "optional",
     apply: patchPreloadBridgeAssets,
     status: optionalDriftStatus,
@@ -619,7 +637,7 @@ const descriptors = [
   {
     id: "github-issues-renderer-route",
     phase: "extracted-app:post-webview",
-    order: 20_932,
+    order: 20_933,
     ciPolicy: "optional",
     apply: patchIssuesRouteAssets,
     status: optionalDriftStatus,
@@ -627,7 +645,7 @@ const descriptors = [
   {
     id: "github-issues-summary",
     phase: "extracted-app:post-webview",
-    order: 20_933,
+    order: 20_934,
     ciPolicy: "optional",
     apply: patchIssuesSummaryAssets,
     status: optionalDriftStatus,
@@ -635,7 +653,7 @@ const descriptors = [
   {
     id: "github-issues-side-panel",
     phase: "extracted-app:post-webview",
-    order: 20_934,
+    order: 20_935,
     ciPolicy: "optional",
     apply: patchIssuesSidePanelAssets,
     status: optionalDriftStatus,
@@ -645,6 +663,7 @@ const descriptors = [
 module.exports = {
   descriptors,
   applyMainBridgePatch,
+  stageIssuesRenderer,
   patchPreloadBridgeAssets,
   optionalDriftStatus,
   walkJavaScriptFiles,

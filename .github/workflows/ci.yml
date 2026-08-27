@@ -21,7 +21,9 @@ jobs:
       - name: Install smoke-test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ripgrep
+          sudo apt-get install -y --no-install-recommends ripgrep xvfb
+      - name: Install UI acceptance dependencies
+        run: npm ci
       - name: Shell syntax
         run: |
           bash -n install.sh launcher/start.sh.template scripts/lib/*.sh
@@ -37,6 +39,8 @@ jobs:
             scripts/lib/linux-features.test.js linux-features/*/test.js
       - name: Smoke tests
         run: bash tests/scripts_smoke.sh
+      - name: GitHub Issues Electron acceptance
+        run: xvfb-run -a npm run test:issues-ui
 
   rust:
     runs-on: ubuntu-latest

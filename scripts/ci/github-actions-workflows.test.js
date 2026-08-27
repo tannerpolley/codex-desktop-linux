@@ -24,6 +24,10 @@ function job(workflow, jobName) {
 test("CI runs the complete workflow regression suite", () => {
   const workflow = read(".github/workflows/ci.yml");
   assert.match(workflow, /node --test scripts\/ci\/\*\.test\.js/);
+  const sourceAndNode = job(workflow, "source-and-node");
+  assert.match(sourceAndNode, /sudo apt-get install -y --no-install-recommends ripgrep xvfb/);
+  assert.match(sourceAndNode, /run: npm ci/);
+  assert.match(sourceAndNode, /run: xvfb-run -a npm run test:issues-ui/);
   const nixBuild = job(workflow, "nix-build");
   assert.match(
     nixBuild,

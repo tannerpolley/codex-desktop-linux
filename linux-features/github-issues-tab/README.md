@@ -33,6 +33,31 @@ Run the adapter contract tests too:
 node --test linux-features/github-issues-tab/issues-adapter.test.js
 ```
 
+The signed-package feature audit also requires every injected static
+`app://` import to resolve inside the patched ASAR webview tree. The renderer
+module is embedded at `webview/github-issues-tab.mjs`, matching the runtime
+`app://-/github-issues-tab.mjs` URL exactly.
+
+## Runtime acceptance
+
+The user-visible acceptance contract is: opening Issues renders the fixture
+issue list, selecting an issue renders its detail and timeline, and no module,
+renderer, bridge, or console error occurs. Automated renderer acceptance uses
+the production renderer with a deterministic fake `electronBridge`; it does
+not read GitHub credentials or contact GitHub. Adapter tests separately drive
+the `gh` request/response contract with fake process output. A live-account
+check is optional release evidence, never a CI prerequisite.
+
+Run the isolated Electron acceptance check with:
+
+```bash
+xvfb-run -a npm run test:issues-ui
+```
+
+It uses a temporary Electron profile plus local fixture responses, clicks an
+Issue row, and requires the list, detail, and timeline to render without a
+renderer error. It does not use the desktop app profile or GitHub credentials.
+
 The `preview/` fixtures reuse the production renderer with local data for
 browser-only UI work; they never call GitHub or require authentication.
 

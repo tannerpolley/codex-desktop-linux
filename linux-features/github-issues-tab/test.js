@@ -25,6 +25,7 @@ const {
 } = require("./bridge-source.js");
 const {
   descriptors,
+  stageIssuesRenderer,
   patchPreloadBridgeAssets,
   optionalDriftStatus,
   patchIssuesRouteAssets,
@@ -44,8 +45,20 @@ test("tracked Issues feature stays disabled and stages only owned resources", ()
   assert.deepEqual(manifest.resources, [
     { source: "issues-adapter.js", target: ".codex-linux/features/github-issues-tab/issues-adapter.js", mode: "0644" },
     { source: "protocol.js", target: ".codex-linux/features/github-issues-tab/protocol.js", mode: "0644" },
-    { source: "renderer.mjs", target: "content/webview/github-issues-tab.mjs", mode: "0644" },
   ]);
+});
+
+test("Issues renderer is embedded at the exact app protocol import path", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-issues-renderer-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "webview"), { recursive: true });
+
+  assert.deepEqual(stageIssuesRenderer(root), { changed: 1, target: "webview/github-issues-tab.mjs" });
+  assert.deepEqual(
+    fs.readFileSync(path.join(root, "webview", "github-issues-tab.mjs")),
+    fs.readFileSync(path.join(featureDir, "renderer.mjs")),
+  );
+  assert.deepEqual(stageIssuesRenderer(root), { changed: 0, target: "webview/github-issues-tab.mjs" });
 });
 
 test("README documents tracked, disabled, authenticated, read-only operation", () => {
@@ -266,8 +279,8 @@ function functionSlice(source, name) {
 test("current official Linux Issues patches are transactional and idempotent", () => {
   const fixture = writeIssueAssetFixture();
   try {
-    assert.equal(descriptors.length, 5);
-    assert.equal(descriptors.filter((descriptor) => descriptor.phase === "extracted-app:post-webview").length, 4);
+    assert.equal(descriptors.length, 6);
+    assert.equal(descriptors.filter((descriptor) => descriptor.phase === "extracted-app:post-webview").length, 5);
     assert.equal(descriptors.some((descriptor) => descriptor.id === "github-issues-renderer-route"), true);
     assert.equal(typeof patchIssuesSummaryAssets, "function");
     assert.equal(typeof patchIssuesSidePanelAssets, "function");

@@ -10,6 +10,7 @@ const {
 } = require("../lib/linux-features.js");
 const { createPatchReport, enabledFeatureFailuresFromReport } = require("../lib/patch-report.js");
 const { patchExtractedApp } = require("../patches/runner.js");
+const { verifyAppProtocolImports } = require("./app-protocol-imports.js");
 
 const source = process.argv[2];
 if (!source || !fs.statSync(source, { throwIfNoEntry: false })?.isDirectory()) {
@@ -54,6 +55,7 @@ try {
       featuresConfigPath: config,
       internalFeatureIds,
     });
+    verifyAppProtocolImports(app);
     const featureFailures = enabledFeatureFailuresFromReport(report);
     audited += 1;
     if (featureFailures.length > 0) {

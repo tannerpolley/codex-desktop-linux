@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "scripts": {
+    "test:issues-ui": "electron linux-features/github-issues-tab/acceptance/main.cjs"
+  },
+  "devDependencies": {
+    "electron": "44.0.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

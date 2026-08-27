@@ -320,3 +320,6 @@ Run the feature tests with:
 ```bash
 node --test linux-features/ui-tweaks/test.js
 ```
+
+The signed-bundle audit also runs `npm run test:settings-ui` against the exact
+patched General Settings lazy module in a hidden isolated Electron profile.

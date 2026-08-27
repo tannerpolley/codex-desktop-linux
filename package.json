@@ -1,7 +1,8 @@
 {
   "private": true,
   "scripts": {
-    "test:issues-ui": "electron linux-features/github-issues-tab/acceptance/main.cjs"
+    "test:issues-ui": "electron linux-features/github-issues-tab/acceptance/main.cjs",
+    "test:settings-ui": "electron linux-features/ui-tweaks/acceptance/main.cjs"
   },
   "devDependencies": {
     "electron": "44.0.0",

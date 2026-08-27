@@ -67,6 +67,9 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(workflow, /^  pull_request:\s*\n  push:/m);
   assert.match(workflow, /^      - \.github\/workflows\/upstream-build-app\.yml$/m);
   const signedBaseline = job(workflow, "signed-baseline");
+  assert.match(signedBaseline, /sudo apt-get install -y dpkg-dev gnupg patchelf xvfb/);
+  assert.match(signedBaseline, /run: npm ci/);
+  assert.match(signedBaseline, /CODEX_ELECTRON_ACCEPTANCE: "1"/);
   assert.match(signedBaseline, /architecture: \[amd64, arm64\]/);
   assert.match(
     signedBaseline,

@@ -4,6 +4,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { spawnSync } = require("node:child_process");
 const {
   discoverLinuxFeatureManifests,
   loadLinuxFeaturePatchDescriptors,
@@ -57,6 +58,23 @@ try {
     });
     verifyAppProtocolImports(app);
     verifyPatchedModuleSyntax(app);
+    if (feature.id === "ui-tweaks" && process.env.CODEX_ELECTRON_ACCEPTANCE === "1") {
+      const profile = path.join(work, "settings-electron-profile");
+      const acceptance = spawnSync("xvfb-run", ["-a", "npm", "run", "test:settings-ui", "--", "--ozone-platform=x11", "--disable-gpu"], {
+        cwd: path.resolve(__dirname, "../.."),
+        encoding: "utf8",
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          CODEX_EXTRACTED_APP_DIR: app,
+          XDG_CACHE_HOME: path.join(profile, "cache"),
+          XDG_CONFIG_HOME: path.join(profile, "config"),
+          XDG_STATE_HOME: path.join(profile, "state"),
+        },
+      });
+      if (acceptance.status !== 0) throw new Error(`Settings Electron acceptance failed:\n${acceptance.stdout}${acceptance.stderr}`);
+      console.log(acceptance.stdout.trim());
+    }
     const featureFailures = enabledFeatureFailuresFromReport(report);
     audited += 1;
     if (featureFailures.length > 0) {

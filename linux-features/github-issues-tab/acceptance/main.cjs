@@ -17,7 +17,7 @@ async function waitFor(window, expression) {
 app.whenReady().then(async () => {
   const errors = [];
   const window = new BrowserWindow({ show: false, webPreferences: { contextIsolation: false, nodeIntegration: true } });
-  window.webContents.on("console-message", (_event, level, message) => { if (level >= 2) errors.push(message); });
+  window.webContents.on("console-message", (details) => { if (details.level === "error") errors.push(details.message); });
   await window.loadFile(path.join(__dirname, "index.html"));
   await window.webContents.executeJavaScript(`
     window.electronBridge={githubIssues:{request:async request=>{

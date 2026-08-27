@@ -71,7 +71,10 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y dpkg-dev gnupg patchelf
+          sudo apt-get install -y dpkg-dev gnupg patchelf xvfb
+      - name: Install UI acceptance dependencies
+        if: matrix.architecture == 'amd64'
+        run: npm ci
       - name: Resolve signed package
         id: upstream
         run: |
@@ -148,6 +151,8 @@ jobs:
             --check-shebangs false
       - name: Audit every ASAR feature against the official bundle
         if: matrix.architecture == 'amd64'
+        env:
+          CODEX_ELECTRON_ACCEPTANCE: "1"
         run: |
           set -euo pipefail
           upstream_root="$(mktemp -d)"

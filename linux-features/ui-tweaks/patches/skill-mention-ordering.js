@@ -5,6 +5,7 @@ const path = require("node:path");
 
 const SKILL_MENTION_ASSET_PATTERN = /^app-initial-[^.]+\.js$/;
 const RUNTIME_MARKER = "codex-linux-skill-mention-namespace-order";
+const RANKING_FUNCTION_PATTERN = /function (?<rank>[$\w]+)\(e,t\)\{let n=t\.trim\(\);if\(n\.length===0\)return e;let r=(?<fuzzy>[$\w]+)\(n\);return\(0,(?<sort>[$\w]+)\.default\)\(e\.map\(\(e,t\)=>\(\{item:e,score:(?<score>[$\w]+)\(e,r\),index:t\}\)\),\[e=>-e\.score,e=>e\.item\.displayName,e=>e\.index\]\)\.filter\(e=>e\.score>0\)\.map\(e=>e\.item\)\}/g;
 
 function warn(message) {
   console.warn(`WARN: ${message} - skipping ui-tweaks skill mention ordering patch`);
@@ -23,30 +24,8 @@ function enabled(context) {
   return skillMentionOrderingConfig(context).enabled === true;
 }
 
-function findFunctionRange(source, name) {
-  const start = source.indexOf(`function ${name}(`);
-  if (start < 0 || source.indexOf(`function ${name}(`, start + 1) >= 0) return null;
-  const open = source.indexOf("{", start);
-  if (open < 0) return null;
-  let depth = 0;
-  let quote = null;
-  let escaped = false;
-  for (let index = open; index < source.length; index += 1) {
-    const character = source[index];
-    if (quote != null) {
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === quote) quote = null;
-      continue;
-    }
-    if (character === "`" || character === "\"" || character === "'") {
-      quote = character;
-      continue;
-    }
-    if (character === "{") depth += 1;
-    else if (character === "}" && --depth === 0) return { start, end: index + 1 };
-  }
-  return null;
+function findRankingFunctions(source) {
+  return [...source.matchAll(RANKING_FUNCTION_PATTERN)];
 }
 
 function applySkillMentionOrderingPatch(source, context = {}) {
@@ -57,32 +36,24 @@ function applySkillMentionOrderingPatch(source, context = {}) {
     }
     if (!enabled(context) || source.includes(RUNTIME_MARKER)) return source;
 
-    const range = findFunctionRange(source, "v1a");
-    if (range == null) {
+    const matches = findRankingFunctions(source);
+    if (matches.length !== 1) {
       if (context.warnOnMissingMarkers === true) warn("Current ranking function was not unique");
       return source;
     }
-    const body = source.slice(range.start, range.end);
-    if (
-      !body.includes("function v1a(e,t){") ||
-      !body.includes("let r=pU(n)") ||
-      !body.includes("y1a(e,r)") ||
-      !body.includes("e.item.displayName")
-    ) {
-      if (context.warnOnMissingMarkers === true) warn("Current ranking anchors did not match");
-      return source;
-    }
+    const match = matches[0];
+    const { rank, fuzzy, sort, score } = match.groups;
 
     const replacement =
-      "function v1a(e,t){let n=t.trim();if(n.length===0)return e;" +
-      "let r=pU(n),i=e.map((e,t)=>({item:e,score:y1a(e,r),index:t}))," +
+      `function ${rank}(e,t){let n=t.trim();if(n.length===0)return e;` +
+      `let r=${fuzzy}(n),i=e.map((e,t)=>({item:e,score:${score}(e,r),index:t})),` +
       "a=n.toLowerCase(),o=a.indexOf(`:`)<0?i.filter(e=>typeof e.item.name===`string`" +
       "&&e.item.name.toLowerCase().startsWith(`${a}:`)):[]," +
       "s=o.length>0?Math.max(...o.map(e=>e.score)):null;" +
       "s!=null&&(i=i.map(e=>o.includes(e)?{...e,score:s}:e));" +
-      "return(0,x1a.default)(i,[e=>-e.score,e=>e.item.displayName,e=>e.index])" +
+      `return(0,${sort}.default)(i,[e=>-e.score,e=>e.item.displayName,e=>e.index])` +
       `.filter(e=>e.score>0).map(e=>e.item)}/*${RUNTIME_MARKER}*/`;
-    return `${source.slice(0, range.start)}${replacement}${source.slice(range.end)}`;
+    return `${source.slice(0, match.index)}${replacement}${source.slice(match.index + match[0].length)}`;
   } catch (error) {
     warn(`Unexpected error: ${error instanceof Error ? error.message : String(error)}`);
     return source;
@@ -100,7 +71,7 @@ function findSkillMentionBundle(extractedDir) {
     })
     .filter(({ source }) =>
       source.includes("composer.skillMentionList.noResults") &&
-      (source.includes("function v1a(") || source.includes(RUNTIME_MARKER)),
+      (findRankingFunctions(source).length === 1 || source.includes(RUNTIME_MARKER)),
     );
   if (candidates.length !== 1) {
     return {

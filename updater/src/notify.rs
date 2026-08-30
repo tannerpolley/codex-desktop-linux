@@ -16,6 +16,19 @@ pub fn send(summary: &str, body: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn send_failure(error: &str) -> Result<()> {
+    let (summary, body) = failure_notification(error);
+    send(summary, &body)
+}
+
+fn failure_notification(error: &str) -> (&'static str, String) {
+    let error = error.lines().next().filter(|line| !line.is_empty()).unwrap_or("unknown error");
+    (
+        "codex-desktop update failed",
+        format!("The Community update could not be prepared: {error}"),
+    )
+}
+
 fn base_notification(summary: &str, body: &str) -> notify_rust::Notification {
     let icon_path = resolve_icon_path();
 
@@ -133,5 +146,16 @@ mod tests {
         let uri = path_to_file_uri(path);
 
         assert_eq!(uri, "file:///tmp/codex%20icon-%C3%B1.png");
+    }
+
+    #[test]
+    fn update_failure_notification_names_the_failed_operation_and_first_error_line() {
+        assert_eq!(
+            failure_notification("update build command failed\nfull log follows"),
+            (
+                "codex-desktop update failed",
+                "The Community update could not be prepared: update build command failed".to_string(),
+            ),
+        );
     }
 }

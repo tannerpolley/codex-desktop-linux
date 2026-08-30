@@ -191,7 +191,7 @@ async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runti
     let package_cache = paths.cache_dir.join("packages");
     let metadata = match upstream::resolve_metadata(&config.builder_bundle_root, &config.repository_url, &package_cache).await {
         Ok(value) => value,
-        Err(error) => return fail(state, paths, error),
+        Err(error) => return fail(config, state, paths, error),
     };
     state.last_successful_check_at = Some(Utc::now());
     let _ = cache_cleanup::prune(&paths.cache_dir, state);
@@ -217,11 +217,12 @@ async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runti
     }
 
     rollback::record_current_package_as_known_good(state);
-    state.candidate_version = Some(metadata.version.clone());
-    state.candidate_architecture = Some(metadata.architecture.clone());
-    state.candidate_repository_path = Some(metadata.repository_path.clone());
-    state.upstream_package_sha256 = Some(metadata.sha256.clone());
-    state.status = UpdateStatus::DownloadingPackage;
+    state.begin_candidate(
+        &metadata.version,
+        &metadata.architecture,
+        &metadata.repository_path,
+        &metadata.sha256,
+    );
     state.save_updater(&paths.state_file)?;
 
     let upstream_package = match upstream::download_verified_package(
@@ -231,11 +232,11 @@ async fn check(config: &RuntimeConfig, state: &mut PersistedState, paths: &Runti
         &metadata,
     ).await {
         Ok(path) => path,
-        Err(error) => return fail(state, paths, error),
+        Err(error) => return fail(config, state, paths, error),
     };
     state.artifact_paths.upstream_package_path = Some(upstream_package.clone());
     if let Err(error) = builder::build_update(config, state, paths, &metadata.version, &upstream_package).await {
-        return fail(state, paths, error);
+        return fail(config, state, paths, error);
     }
 
     if config.notifications {
@@ -250,14 +251,10 @@ async fn install_ready(
     paths: &RuntimePaths,
     explicit_retry: bool,
 ) -> Result<()> {
-    if !matches!(state.status, UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit | UpdateStatus::Failed) {
+    let Some(package) = state.ready_package().map(Path::to_path_buf) else {
         println!("No rebuilt package is ready to install.");
         return Ok(());
-    }
-    if state.status == UpdateStatus::Failed && !explicit_retry {
-        return Ok(());
-    }
-    let package = state.artifact_paths.package_path.clone().context("ready state has no package")?;
+    };
     anyhow::ensure!(package.is_file(), "rebuilt package is missing: {}", package.display());
     if liveness::is_app_running(config)? {
         state.status = UpdateStatus::WaitingForAppExit;
@@ -280,7 +277,7 @@ async fn install_ready(
         .output()
         .context("Failed to launch privileged package install")?;
     if !output.status.success() {
-        return fail(state, paths, anyhow::anyhow!(
+        return fail(config, state, paths, anyhow::anyhow!(
             "privileged install failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
@@ -308,9 +305,15 @@ fn complete_candidate_install(state: &mut PersistedState, installed_version: Str
     state.error_message = None;
 }
 
-fn fail<T>(state: &mut PersistedState, paths: &RuntimePaths, error: anyhow::Error) -> Result<T> {
-    state.mark_failed(format!("{error:#}"));
+fn fail<T>(config: &RuntimeConfig, state: &mut PersistedState, paths: &RuntimePaths, error: anyhow::Error) -> Result<T> {
+    let message = format!("{error:#}");
+    state.mark_failed(&message);
     state.save_updater(&paths.state_file)?;
+    if config.notifications {
+        if let Err(notification_error) = notify::send_failure(&message) {
+            error!(?notification_error, "failure notification failed");
+        }
+    }
     Err(error)
 }
 

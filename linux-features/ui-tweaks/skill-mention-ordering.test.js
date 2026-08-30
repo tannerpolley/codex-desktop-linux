@@ -126,3 +126,19 @@ test("app patch is transactional, idempotent, and rejects ambiguity", () => {
     fs.rmSync(ambiguous.extractedDir, { recursive: true, force: true });
   }
 });
+
+test("matches the current signed skill mention bundle when provided", { skip: process.env.CODEX_OFFICIAL_EXTRACTED_DIR == null }, () => {
+  const assetsDir = path.join(process.env.CODEX_OFFICIAL_EXTRACTED_DIR, "webview", "assets");
+  const name = fs.readdirSync(assetsDir).find((entry) => /^app-initial-[^.]+\.js$/.test(entry)
+    && fs.readFileSync(path.join(assetsDir, entry), "utf8").includes("composer.skillMentionList.noResults"));
+  assert.ok(name);
+  const fixture = createExtractedApp([fs.readFileSync(path.join(assetsDir, name), "utf8")]);
+  try {
+    const result = applySkillMentionOrderingAppPatch(fixture.extractedDir, enabledContext());
+    assert.equal(result.matched, 1, JSON.stringify(result));
+    assert.equal(result.changed, 1);
+    assert.match(fs.readFileSync(path.join(fixture.assetsDir, "app-initial-0.js"), "utf8"), new RegExp(RUNTIME_MARKER));
+  } finally {
+    fs.rmSync(fixture.extractedDir, { recursive: true, force: true });
+  }
+});

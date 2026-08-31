@@ -16,6 +16,7 @@ Focused checks:
 
 ```bash
 node --test linux-features/github-issues-tab/test.js
+xvfb-run -a npm run test:issues-ui
 ```
 
-Runtime acceptance must patch the current signed package, load `/issues` in an isolated Electron profile, and assert that the account-wide list and detail pane render without module, console, or bridge errors. A live-account query is release evidence, not a CI dependency.
+The headless check loads the renderer through the same lazy-component contract as the upstream Pull Requests route. Runtime acceptance must also patch the current signed package, load `/issues` in an isolated Electron profile, and assert that the account-wide list and detail pane render without module, console, or bridge errors. A live-account query is release evidence, not a CI dependency.

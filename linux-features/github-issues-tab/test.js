@@ -54,6 +54,8 @@ test("patches the route and inserts Issues immediately after Pull requests", () 
     const output = fs.readFileSync(target, "utf8");
     assert.match(output, new RegExp(ROUTE_MARKER));
     assert.match(output, /path:`\/issues`/);
+    assert.match(output, /codexLinuxGithubIssuesRoute=lazy\(async\(\)=>\(await import\(`\/github-issues-tab\.mjs`\)\)\.createIssuesRoute\(\{React:React\}\)\)/);
+    assert.doesNotMatch(output, /codexLinuxGithubIssuesRoute=lazy\(async\(\)=>\(\{default:/);
     const pull = output.indexOf("sidebarElectron.pullRequestsRouteNavLink");
     const issues = output.indexOf("codex-linux-github-issues");
     assert.ok(pull !== -1 && issues > pull);
@@ -73,7 +75,13 @@ test("stages renderer and patches trusted main and preload bridges", () => {
     const preload = "let e=require(`electron`),L={getSentryInitOptions:()=>w,send:x=>e.ipcRenderer.invoke(`x`,x)};e.contextBridge.exposeInMainWorld(`electronBridge`,L);";
     assert.match(applyPreloadBridgePatch(preload), /githubIssues:\{request:/);
     const main = "function register(e,t){return electron.ipcMain.handle(`message`,async(e,r)=>{if(!t(e))return;return r})}";
-    assert.match(applyMainBridgePatch(main), /codex-linux:github-issues/);
+    const patchedMain = applyMainBridgePatch(main);
+    assert.match(patchedMain, /codex-linux:github-issues/);
+    assert.match(patchedMain, /resourcesPath,`cua_node`,`bin`,`node`/);
+    assert.doesNotMatch(patchedMain, /resourcesPath,`node-runtime`/);
+    assert.match(patchedMain, /`repository`,`query`,`cursor`/);
+    assert.match(patchedMain, /codexLinuxGithubIssuesString\(input\.query,500,`query`,false\)/);
+    assert.doesNotMatch(patchedMain, /codexLinuxGithubIssuesString\(input\.text/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

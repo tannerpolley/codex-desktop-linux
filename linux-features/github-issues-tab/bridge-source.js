@@ -105,7 +105,7 @@ const codexLinuxGithubIssuesOperations=new Set([\`capabilities\`,\`listIssues\`,
 const codexLinuxGithubIssuesAdapterTimeouts=Object.freeze({capabilities:30000,listIssues:30000,getIssue:60000});
 const codexLinuxGithubIssuesPath=require(\`node:path\`);
 const codexLinuxGithubIssuesSpawn=require(\`node:child_process\`).spawn;
-const codexLinuxGithubIssuesNodePath=codexLinuxGithubIssuesPath.join(process.resourcesPath,\`node-runtime\`,\`bin\`,\`node\`);
+const codexLinuxGithubIssuesNodePath=codexLinuxGithubIssuesPath.join(process.resourcesPath,\`cua_node\`,\`bin\`,\`node\`);
 const codexLinuxGithubIssuesAdapterPath=codexLinuxGithubIssuesPath.join(process.resourcesPath,\`..\`,\`.codex-linux\`,\`features\`,\`github-issues-tab\`,\`issues-adapter.js\`);
 function codexLinuxGithubIssuesRecord(value){if(value===null||typeof value!==\`object\`||Array.isArray(value))return false;const prototype=Object.getPrototypeOf(value);return prototype===Object.prototype||prototype===null}
 function codexLinuxGithubIssuesString(value,max,field,nonEmpty=true){if(typeof value!==\`string\`||((nonEmpty&&value.length===0)||value.length>max)||/[\\u0000-\\u001f\\u007f-\\u009f]/u.test(value))throw Error(\`invalid \${field}\`);return value}
@@ -118,7 +118,7 @@ function codexLinuxGithubIssuesInput(operation,input){
   if(!codexLinuxGithubIssuesRecord(input))throw Error(\`input must be an object\`);
   if(operation===\`capabilities\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`root\`]));codexLinuxGithubIssuesHost(input.host,true);codexLinuxGithubIssuesRoot(input.root);return}
   if(operation===\`cancel\`){codexLinuxGithubIssuesFields(input,new Set([\`targetRequestId\`]));codexLinuxGithubIssuesString(input.targetRequestId,96,\`targetRequestId\`);return}
-  if(operation===\`listIssues\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`view\`,\`state\`,\`repository\`,\`text\`,\`cursor\`]));codexLinuxGithubIssuesHost(input.host);if(![\`assigned\`,\`authored\`,\`all\`].includes(input.view)||![\`open\`,\`closed\`,\`all\`].includes(input.state))throw Error(\`invalid list input\`);codexLinuxGithubIssuesRepository(input.repository);codexLinuxGithubIssuesString(input.text,500,\`text\`,false);codexLinuxGithubIssuesOptionalString(input.cursor,512,\`cursor\`);return}
+  if(operation===\`listIssues\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`view\`,\`state\`,\`repository\`,\`query\`,\`cursor\`]));codexLinuxGithubIssuesHost(input.host);if(![\`assigned\`,\`authored\`,\`all\`].includes(input.view)||![\`open\`,\`closed\`,\`all\`].includes(input.state))throw Error(\`invalid list input\`);codexLinuxGithubIssuesRepository(input.repository);codexLinuxGithubIssuesString(input.query,500,\`query\`,false);codexLinuxGithubIssuesOptionalString(input.cursor,512,\`cursor\`);return}
   if(operation===\`getIssue\`){codexLinuxGithubIssuesFields(input,new Set([\`host\`,\`nodeId\`]));codexLinuxGithubIssuesHost(input.host);codexLinuxGithubIssuesString(input.nodeId,256,\`nodeId\`);return}
   throw Error(\`invalid operation\`);
 }

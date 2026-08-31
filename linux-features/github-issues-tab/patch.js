@@ -83,7 +83,7 @@ function patchRoute(source) {
   const shape = routeShape(source);
   if (!shape) return null;
   const routeVariable = "codexLinuxGithubIssuesRoute";
-  const assignment = `${routeVariable}=${shape.lazy.match[2]}(async()=>({default:(await import(\`/github-issues-tab.mjs\`)).createIssuesRoute({React:${shape.react}})}))`;
+  const assignment = `${routeVariable}=${shape.lazy.match[2]}(async()=>(await import(\`/github-issues-tab.mjs\`)).createIssuesRoute({React:${shape.react}}))`;
   let patched = source;
   const declaration = shape.lazy.match[0].match(/^(?:const|let|var)\b/u)?.[0];
   if (declaration) {

@@ -6,8 +6,9 @@ const { app, BrowserWindow } = require("electron");
 
 const renderer = pathToFileURL(path.join(__dirname, "..", "renderer.mjs")).href;
 
-async function waitFor(window, expression) {
+async function waitFor(window, expression, errors = []) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (errors.length) throw new Error(errors.join("\n"));
     if (await window.webContents.executeJavaScript(expression)) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
@@ -27,9 +28,11 @@ app.whenReady().then(async () => {
     }}};
     const React=require('react');
     const ReactDOM=require('react-dom/client');
-    import(${JSON.stringify(renderer)}).then(module=>ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(module.createIssuesRoute({React}))));
+    const upstreamLazy=loader=>React.lazy(()=>Promise.resolve().then(loader).then(component=>({default:component})));
+    const IssuesRoute=upstreamLazy(async()=>(await import(${JSON.stringify(renderer)})).createIssuesRoute({React}));
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(React.Suspense,{fallback:null},React.createElement(IssuesRoute)));
   `);
-  await waitFor(window, "document.querySelector('[data-testid=\"issue-7\"]')!==null");
+  await waitFor(window, "document.querySelector('[data-testid=\"issue-7\"]')!==null", errors);
   await window.webContents.executeJavaScript("document.querySelector('[data-testid=\"issue-7\"]').click()");
   await waitFor(window, "document.querySelector('[data-testid=\"issue-detail\"]')?.textContent.includes('Issue comment')===true");
   if (errors.length) throw new Error(errors.join("\n"));

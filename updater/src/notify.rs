@@ -1,7 +1,7 @@
 //! Desktop notification helpers used by the updater daemon.
 
 use anyhow::Result;
-use notify_rust::Hint;
+use notify_rust::{Hint, Timeout, Urgency};
 use std::path::{Path, PathBuf};
 
 const APP_NAME: &str = "ChatGPT Community";
@@ -17,16 +17,24 @@ pub fn send(summary: &str, body: &str) -> Result<()> {
 }
 
 pub fn send_failure(error: &str) -> Result<()> {
-    let (summary, body) = failure_notification(error);
-    send(summary, &body)
+    failure_notification(error).show()?;
+    Ok(())
 }
 
-fn failure_notification(error: &str) -> (&'static str, String) {
-    let error = error.lines().next().filter(|line| !line.is_empty()).unwrap_or("unknown error");
-    (
+fn failure_notification(error: &str) -> notify_rust::Notification {
+    let error = error
+        .lines()
+        .next()
+        .filter(|line| !line.is_empty())
+        .unwrap_or("unknown error");
+    let mut notification = base_notification(
         "codex-desktop update failed",
-        format!("The Community update could not be prepared: {error}"),
-    )
+        &format!("The Community update could not be prepared: {error}"),
+    );
+    notification
+        .urgency(Urgency::Critical)
+        .timeout(Timeout::Never);
+    notification
 }
 
 fn base_notification(summary: &str, body: &str) -> notify_rust::Notification {
@@ -150,12 +158,16 @@ mod tests {
 
     #[test]
     fn update_failure_notification_names_the_failed_operation_and_first_error_line() {
+        let notification = failure_notification("update build command failed\nfull log follows");
+
+        assert_eq!(notification.summary, "codex-desktop update failed");
         assert_eq!(
-            failure_notification("update build command failed\nfull log follows"),
-            (
-                "codex-desktop update failed",
-                "The Community update could not be prepared: update build command failed".to_string(),
-            ),
+            notification.body,
+            "The Community update could not be prepared: update build command failed",
         );
+        assert_eq!(notification.timeout, Timeout::Never);
+        assert!(notification
+            .hints
+            .contains(&Hint::Urgency(Urgency::Critical)));
     }
 }

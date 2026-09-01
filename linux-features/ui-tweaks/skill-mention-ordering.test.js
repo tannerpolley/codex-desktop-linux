@@ -11,6 +11,7 @@ const vm = require("node:vm");
 const featureManifest = require("./feature.json");
 const {
   RUNTIME_MARKER,
+  SKILL_MENTION_ASSET_PATTERN,
   applySkillMentionOrderingAppPatch,
   applySkillMentionOrderingPatch,
   descriptors,
@@ -129,7 +130,7 @@ test("app patch is transactional, idempotent, and rejects ambiguity", () => {
 
 test("matches the current signed skill mention bundle when provided", { skip: process.env.CODEX_OFFICIAL_EXTRACTED_DIR == null }, () => {
   const assetsDir = path.join(process.env.CODEX_OFFICIAL_EXTRACTED_DIR, "webview", "assets");
-  const name = fs.readdirSync(assetsDir).find((entry) => /^app-initial-[^.]+\.js$/.test(entry)
+  const name = fs.readdirSync(assetsDir).find((entry) => SKILL_MENTION_ASSET_PATTERN.test(entry)
     && fs.readFileSync(path.join(assetsDir, entry), "utf8").includes("composer.skillMentionList.noResults"));
   assert.ok(name);
   const fixture = createExtractedApp([fs.readFileSync(path.join(assetsDir, name), "utf8")]);

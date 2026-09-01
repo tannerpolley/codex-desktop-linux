@@ -82,7 +82,7 @@ function settingsAliases(source, requestAsset) {
     return match?.[1] === requestAsset.exportName ? (match[2] ?? match[1]) : null;
   }).find((value) => value != null);
   return {
-    jsx: source.match(/function [A-Za-z_$][\w$]*\(\)\{[\s\S]{0,200}?\(0,([A-Za-z_$][\w$]*)\.jsx\)\([^)]*slug:`general-settings`/u)?.[1],
+    jsx: source.match(/function [A-Za-z_$][\w$]*\(\)\{[\s\S]{0,1200}?\(0,([A-Za-z_$][\w$]*)\.jsx\)\([^)]*slug:`general-settings`/u)?.[1],
     react: source.match(/\b([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\(\),1\)/u)?.[1],
     group: source.match(/\.jsxs\)\(([A-Za-z_$][\w$]*),\{children:\[[^\]]*?\.jsx\)\(\1\.Content/u)?.[1],
     surface: source.match(/\.Content,\{children:\(0,[A-Za-z_$][\w$]*\.jsxs?\)\(([A-Za-z_$][\w$]*),\{children:/u)?.[1],
@@ -96,7 +96,7 @@ function applyKeepQuestionsOpenSettingsPatch(source, requestAsset, context = {})
   if (source.includes(SETTINGS_MARKER)) return source;
   const aliases = settingsAliases(source, requestAsset);
   if (Object.values(aliases).some((value) => value == null)) return source;
-  const page = source.match(/function ([A-Za-z_$][\w$]*)\(\)\{[\s\S]{0,300}?slug:`general-settings`/u)?.[1];
+  const page = source.match(/function ([A-Za-z_$][\w$]*)\(\)\{[\s\S]{0,1200}?slug:`general-settings`/u)?.[1];
   if (page == null) return source;
   const nextFunction = source.slice(source.indexOf(`function ${page}()`)).match(/\}\s*function ([A-Za-z_$][\w$]*)\(\)\{/u)?.[1];
   if (nextFunction == null) return source;

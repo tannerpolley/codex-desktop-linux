@@ -3,7 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const SKILL_MENTION_ASSET_PATTERN = /^app-initial-[^.]+\.js$/;
+const SKILL_MENTION_ASSET_PATTERN = /^app-(?:initial|primary)-[^.]+\.js$/;
 const RUNTIME_MARKER = "codex-linux-skill-mention-namespace-order";
 const RANKING_FUNCTION_PATTERN = /function (?<rank>[$\w]+)\(e,t\)\{let n=t\.trim\(\);if\(n\.length===0\)return e;let r=(?<fuzzy>[$\w]+)\(n\);return\(0,(?<sort>[$\w]+)\.default\)\(e\.map\(\(e,t\)=>\(\{item:e,score:(?<score>[$\w]+)\(e,r\),index:t\}\)\),\[e=>-e\.score,e=>e\.item\.displayName,e=>e\.index\]\)\.filter\(e=>e\.score>0\)\.map\(e=>e\.item\)\}/g;
 

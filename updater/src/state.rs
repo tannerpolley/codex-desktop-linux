@@ -142,6 +142,23 @@ impl PersistedState {
         self.waiting_for_app_exit_auto_install = false;
     }
 
+    pub fn begin_candidate(&mut self, version: &str, architecture: &str, repository_path: &str, sha256: &str) {
+        self.candidate_version = Some(version.to_owned());
+        self.candidate_architecture = Some(architecture.to_owned());
+        self.candidate_repository_path = Some(repository_path.to_owned());
+        self.upstream_package_sha256 = Some(sha256.to_owned());
+        self.artifact_paths.upstream_package_path = None;
+        self.artifact_paths.workspace_dir = None;
+        self.artifact_paths.package_path = None;
+        self.status = UpdateStatus::DownloadingPackage;
+    }
+
+    pub fn ready_package(&self) -> Option<&Path> {
+        matches!(self.status, UpdateStatus::ReadyToInstall | UpdateStatus::WaitingForAppExit)
+            .then(|| self.artifact_paths.package_path.as_deref())
+            .flatten()
+    }
+
 }
 
 #[cfg(test)]
@@ -165,5 +182,31 @@ mod tests {
         assert_eq!(state.installed_version, "1.2.3");
         assert_eq!(state.artifact_paths.rollback_package_path, Some(PathBuf::from("/tmp/good.deb")));
         Ok(())
+    }
+
+    #[test]
+    fn new_candidate_drops_stale_build_artifacts_but_preserves_rollback() {
+        let mut state = PersistedState::new(true);
+        state.artifact_paths.upstream_package_path = Some("old-upstream.deb".into());
+        state.artifact_paths.workspace_dir = Some("old-workspace".into());
+        state.artifact_paths.package_path = Some("old-candidate.deb".into());
+        state.artifact_paths.rollback_package_path = Some("known-good.deb".into());
+
+        state.begin_candidate("26.825.51511", "amd64", "pool/chatgpt.deb", "signed-sha");
+
+        assert_eq!(state.candidate_version.as_deref(), Some("26.825.51511"));
+        assert_eq!(state.artifact_paths.upstream_package_path, None);
+        assert_eq!(state.artifact_paths.workspace_dir, None);
+        assert_eq!(state.artifact_paths.package_path, None);
+        assert_eq!(state.artifact_paths.rollback_package_path, Some(PathBuf::from("known-good.deb")));
+    }
+
+    #[test]
+    fn failed_candidate_is_never_installable_even_with_a_stale_path() {
+        let mut state = PersistedState::new(true);
+        state.status = UpdateStatus::Failed;
+        state.artifact_paths.package_path = Some("old-candidate.deb".into());
+
+        assert_eq!(state.ready_package(), None);
     }
 }

@@ -148,6 +148,12 @@ hashes.
   incomplete payload.
 - Feature changes run the adjacent test and an official-bundle build with that
   feature alone.
+- A user-visible feature is runtime-verified only when an executable acceptance
+  check drives its stated UI outcome against the packaged resources. Unit,
+  patch, and staging checks are necessary evidence, not runtime acceptance.
+- Static `app://` imports added by a feature must resolve inside the final ASAR
+  webview tree. Renderer acceptance uses deterministic bridge fixtures; live
+  account checks are separate, optional release evidence.
 - Package payload changes inspect deb, RPM, pacman, AppImage, and Nix on the
   applicable architectures.
 - Updater changes cover interrupted work, app-running guards, atomic promotion,

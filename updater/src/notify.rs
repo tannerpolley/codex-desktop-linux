@@ -1,7 +1,7 @@
 //! Desktop notification helpers used by the updater daemon.
 
 use anyhow::Result;
-use notify_rust::Hint;
+use notify_rust::{Hint, Timeout, Urgency};
 use std::path::{Path, PathBuf};
 
 const APP_NAME: &str = "ChatGPT Community";
@@ -14,6 +14,27 @@ pub fn send(summary: &str, body: &str) -> Result<()> {
     let notification = base_notification(summary, body);
     notification.show()?;
     Ok(())
+}
+
+pub fn send_failure(error: &str) -> Result<()> {
+    failure_notification(error).show()?;
+    Ok(())
+}
+
+fn failure_notification(error: &str) -> notify_rust::Notification {
+    let error = error
+        .lines()
+        .next()
+        .filter(|line| !line.is_empty())
+        .unwrap_or("unknown error");
+    let mut notification = base_notification(
+        "codex-desktop update failed",
+        &format!("The Community update could not be prepared: {error}"),
+    );
+    notification
+        .urgency(Urgency::Critical)
+        .timeout(Timeout::Never);
+    notification
 }
 
 fn base_notification(summary: &str, body: &str) -> notify_rust::Notification {
@@ -133,5 +154,20 @@ mod tests {
         let uri = path_to_file_uri(path);
 
         assert_eq!(uri, "file:///tmp/codex%20icon-%C3%B1.png");
+    }
+
+    #[test]
+    fn update_failure_notification_names_the_failed_operation_and_first_error_line() {
+        let notification = failure_notification("update build command failed\nfull log follows");
+
+        assert_eq!(notification.summary, "codex-desktop update failed");
+        assert_eq!(
+            notification.body,
+            "The Community update could not be prepared: update build command failed",
+        );
+        assert_eq!(notification.timeout, Timeout::Never);
+        assert!(notification
+            .hints
+            .contains(&Hint::Urgency(Urgency::Critical)));
     }
 }

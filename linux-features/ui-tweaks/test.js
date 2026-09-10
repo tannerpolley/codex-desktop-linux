@@ -10,6 +10,9 @@ const test = require("node:test");
 require("./suggested-prompts.test.js");
 require("./dock-icon.test.js");
 require("./skill-mention-ordering.test.js");
+require("./keep-questions-open.test.js");
+require("./native-input-guidance.test.js");
+require("./linux-revisions-bridge.test.js");
 
 const {
   discoverLinuxFeatureManifests,
@@ -29,6 +32,7 @@ const {
 } = require("./patches/model-picker-model-list.js");
 const {
   DEFAULT_PROJECT_NAME_STYLE,
+  PROJECT_ROW_ATTRIBUTE,
   PROJECTS_SIDEBAR_ASSET_PATTERN,
   PROJECT_NAME_SELECTOR,
   RUNTIME_MARKER,
@@ -56,8 +60,11 @@ const {
 
 function projectBundleFixture() {
   return [
-    "function row(){let j=Pn(`group/folder-row group relative flex h-[var(--height-token-row)] text-sm text-token-foreground`);",
-    "let V=(0,Iy.jsx)(`span`,{className:`text-fade-truncate pe-1`,children:p});return [j,V]}",
+    `var actions={sidebarProjectRow:\`${PROJECT_ROW_ATTRIBUTE}\`};`,
+    "function marquee(e){return(0,Iy.jsx)(`span`,{...e,\"data-marquee-text\":!0})}",
+    "function projectRow(){let p=actions.sidebarProjectRow({collapsed:r,label:c,projectId:l});",
+    "let E=(0,Iy.jsx)(Marquee,{className:`select-none`,animateOnGroupHover:!0,children:c});",
+    "return(0,Iy.jsx)(FolderRow,{...p,label:E})}",
   ].join("");
 }
 
@@ -203,11 +210,16 @@ function applyPatchTwice(source, context) {
 
 function copyFeatureTo(featuresRoot) {
   const featureDir = path.join(featuresRoot, "ui-tweaks");
+  const patchLibDir = path.join(featuresRoot, "..", "scripts", "patches", "lib");
   fs.mkdirSync(featureDir, { recursive: true });
+  fs.mkdirSync(patchLibDir, { recursive: true });
   for (const name of ["feature.json", "README.md", "patch.js"]) {
     fs.copyFileSync(path.join(__dirname, name), path.join(featureDir, name));
   }
   fs.cpSync(path.join(__dirname, "patches"), path.join(featureDir, "patches"), { recursive: true });
+  for (const name of ["assets.js", "minified-js.js"]) {
+    fs.copyFileSync(path.join(__dirname, "..", "..", "scripts", "patches", "lib", name), path.join(patchLibDir, name));
+  }
 }
 
 function withCapturedWarns(fn) {
@@ -265,6 +277,10 @@ test("ui-tweaks is discoverable and disabled until listed in features.json", () 
         ["feature:ui-tweaks:home-suggested-prompts-app-page", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-settings-row", "webview-asset", "optional"],
         ["feature:ui-tweaks:home-suggested-prompts-content", "webview-asset", "optional"],
+        ["feature:ui-tweaks:linux-revisions-main-bridge", "main-bundle", "optional"],
+        ["feature:ui-tweaks:linux-revisions-preload-bridge", "extracted-app:post-webview", "optional"],
+        ["feature:ui-tweaks:keep-questions-open", "extracted-app:pre-webview", "optional"],
+        ["feature:ui-tweaks:linux-revisions-settings", "extracted-app:post-webview", "optional"],
       ],
     );
     const modelPickerDescriptors = descriptors.filter((descriptor) =>
@@ -802,6 +818,14 @@ test("patch injects sidebar project-name stylesheet runtime once", () => {
   assert.equal((patched.match(new RegExp(STYLE_ID, "g")) ?? []).length, 1);
 });
 
+test("sidebar project name selector follows the semantic project-row marquee contract", () => {
+  assert.equal(
+    PROJECT_NAME_SELECTOR,
+    `[${PROJECT_ROW_ATTRIBUTE}] [data-marquee-text]`,
+  );
+  assert.doesNotMatch(PROJECT_NAME_SELECTOR, /folder-row|text-fade-truncate/);
+});
+
 test("feature manifest defaults reach descriptor context through the feature loader", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ui-tweaks-manifest-defaults-"));
   try {
@@ -932,10 +956,24 @@ test("patch skips unrelated assets", () => {
 test("drift warning returns source unchanged", () => {
   const source = [
     "function Hd(){return {id:`sidebarElectron.projectsNavLink`,defaultMessage:`Projects`}}",
-    "function row(){let j=Pn(`group/folder-row group relative flex`);return j}",
+    "function row(){return actions.sidebarProjectRow({collapsed:r,label:c,projectId:l})}",
   ].join("");
 
   const { value, warnings } = withCapturedWarns(() => applySidebarProjectNameStylePatch(source));
+
+  assert.equal(value, source);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^WARN: Could not find current sidebar project name markers/);
+});
+
+test("obsolete project-name markers do not produce a false applied result", () => {
+  const source = [
+    "function row(){let j=Pn(`group/folder-row group relative flex`);",
+    "let V=(0,Iy.jsx)(`span`,{className:`text-fade-truncate pe-1`,children:p});return [j,V]}",
+    'function marquee(){return {"data-marquee-text":!0}}',
+  ].join("");
+
+  const { value, warnings } = withCapturedWarns(() => patches[0].apply(source, {}));
 
   assert.equal(value, source);
   assert.equal(warnings.length, 1);

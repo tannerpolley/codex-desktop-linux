@@ -17,6 +17,8 @@ Enable it in the local, gitignored feature config:
 
 | Tweak | Patch module | What it does | Settings |
 | --- | --- | --- | --- |
+| `composer.keepQuestionsOpen` | `patches/keep-questions-open.js` | Keeps structured questions open until answered or interrupted by removing the main-process empty-answer timer registration, and adds a toggle under General → Linux revisions. | `tweaks.composer.keepQuestionsOpen.enabled` |
+| `composer.expandedNativeInputChoices` | `patches/native-input-guidance.js` | Replaces the legacy three-question/three-option and Default-mode guidance in the bundled Codex tool description with complete-set native-input guidance. Consequential decisions remain pending until answered, and unavailable or unrepresentable native input is reported without a plain-text substitute. | `tweaks.composer.expandedNativeInputChoices.enabled` |
 | `appearance.dockIcon` | `patches/dock-icon.js` | Exposes the upstream Dock icon selector and synchronizes the selected icon across Linux windows, tray, and supported desktop launchers. | `tweaks.appearance.dockIcon.enabled` |
 | `appearance.uiFontSize` | `patches/ui-font-size.js` | Raises the upstream 16 px UI font-size maximum to a configurable value. | `tweaks.appearance.uiFontSize.enabled`, `tweaks.appearance.uiFontSize.max` |
 | `composer.skillMentionOrdering` | `patches/skill-mention-ordering.js` | Groups namespace matches such as `cse:*` into one relevance tier, then orders them by display name. | `tweaks.composer.skillMentionOrdering.enabled` |
@@ -27,9 +29,17 @@ Enable it in the local, gitignored feature config:
 
 ## Settings
 
-Tracked defaults live in `feature.json`, but local preferences should not be
-edited there. Put user-specific overrides in the gitignored
-`linux-features/features.json` file under `settings.ui-tweaks`.
+Updater-enabled native packages expose every toggle under **Settings → General
+→ Linux revisions**. Change any number of switches, then select **Apply and
+rebuild**. The updater writes the allow-listed choices to
+`${XDG_CONFIG_HOME:-~/.config}/codex-update-manager/features.json`, rebuilds the
+current signed OpenAI package in the background, and installs it after ChatGPT
+Community closes.
+
+Tracked defaults live in `feature.json` and should not be edited for personal
+preferences. The gitignored `linux-features/features.json` format remains the
+developer/build fallback and supports advanced values such as a custom font
+maximum or sidebar style.
 
 Example local config:
 
@@ -51,6 +61,31 @@ Example local config:
 ```
 
 Each tweak documents its own config keys below.
+
+### `composer.keepQuestionsOpen`
+
+The Linux revisions switch updates this behavior when **Apply and rebuild** is
+selected; the queued rebuild preserves the choice in future packages. Enabling
+it leaves explicit answer submission unchanged and prevents the app from
+creating the timer state that supplies the Snooze control. Turning it off
+restores the official timer.
+
+```json
+{
+  "enabled": ["ui-tweaks"],
+  "settings": {
+    "ui-tweaks": {
+      "tweaks": {
+        "composer": {
+          "keepQuestionsOpen": {
+            "enabled": true
+          }
+        }
+      }
+    }
+  }
+}
+```
 
 ### `composer.skillMentionOrdering`
 
@@ -285,3 +320,6 @@ Run the feature tests with:
 ```bash
 node --test linux-features/ui-tweaks/test.js
 ```
+
+The signed-bundle audit also runs `npm run test:settings-ui` against the exact
+patched General Settings lazy module in a hidden isolated Electron profile.

@@ -26,6 +26,8 @@ pub async fn run(config: &RuntimeConfig, state: &mut PersistedState, paths: &Run
     };
     let blocked_version = state.candidate_version.clone().or_else(|| Some(state.installed_version.clone()));
     let blocked_sha = state.upstream_package_sha256.clone();
+    state.rollback_blocked_candidate_version = blocked_version;
+    state.rollback_blocked_package_sha256 = blocked_sha;
     state.status = UpdateStatus::Installing;
     state.save_updater(&paths.state_file)?;
     let output = install_rollback::pkexec_command(&std::env::current_exe()?, &package)
@@ -37,20 +39,21 @@ pub async fn run(config: &RuntimeConfig, state: &mut PersistedState, paths: &Run
         state.save_updater(&paths.state_file)?;
         anyhow::bail!(message);
     }
-    state.status = UpdateStatus::Installed;
-    state.installed_version = install::installed_package_version();
-    state.installed_upstream_version = state.last_known_good_upstream_version.clone();
-    state.installed_upstream_sha256 = state.last_known_good_upstream_sha256.clone();
-    state.candidate_version = None;
-    state.rollback_blocked_candidate_version = blocked_version;
-    state.rollback_blocked_package_sha256 = blocked_sha;
-    state.artifact_paths.package_path = Some(package.clone());
-    state.artifact_paths.rollback_package_path = Some(package);
-    state.last_known_good_version = Some(state.installed_version.clone());
-    state.error_message = None;
+    complete_install(state, install::installed_package_version());
     state.save_updater(&paths.state_file)?;
     println!("Rolled back codex-desktop to {}.", state.installed_version);
     Ok(())
+}
+
+pub(crate) fn complete_install(state: &mut PersistedState, installed_version: String) {
+    state.status = UpdateStatus::Installed;
+    state.installed_version = installed_version;
+    state.installed_upstream_version = state.last_known_good_upstream_version.clone();
+    state.installed_upstream_sha256 = state.last_known_good_upstream_sha256.clone();
+    state.candidate_version = None;
+    state.artifact_paths.package_path = state.artifact_paths.rollback_package_path.clone();
+    state.last_known_good_version = Some(state.installed_version.clone());
+    state.error_message = None;
 }
 
 #[cfg(test)]

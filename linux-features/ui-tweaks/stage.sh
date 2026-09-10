@@ -10,6 +10,7 @@ resources_dir="$install_dir/resources"
 target_dir="$resources_dir/dock-icon"
 temp_dir="$resources_dir/.dock-icon.tmp.$$"
 helper_source="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sync-desktop-icon.sh"
+feature_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 remove_dock_icon_payload() {
     rm -rf -- "$temp_dir"
@@ -32,6 +33,23 @@ const feature = loadEnabledLinuxFeatures().find(({ id }) => id === "ui-tweaks");
 process.stdout.write(feature != null && dockIconEnabled({ feature }) ? "true" : "false");
 NODE
 )"
+
+native_input_guidance_enabled="$(node - "$SCRIPT_DIR" <<'NODE'
+const path = require("node:path");
+const scriptDir = process.argv[2];
+const { loadEnabledLinuxFeatures } = require(path.join(scriptDir, "scripts/lib/linux-features.js"));
+const { enabled } = require(path.join(
+  scriptDir,
+  "linux-features/ui-tweaks/patches/native-input-guidance.js",
+));
+const feature = loadEnabledLinuxFeatures().find(({ id }) => id === "ui-tweaks");
+process.stdout.write(feature != null && enabled({ feature }) ? "true" : "false");
+NODE
+)"
+
+if [ "$native_input_guidance_enabled" = "true" ]; then
+    node "$feature_dir/patches/native-input-guidance.js" "$resources_dir/codex"
+fi
 
 if [ "$dock_icon_enabled" != "true" ]; then
     remove_dock_icon_payload

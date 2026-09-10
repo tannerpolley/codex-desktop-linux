@@ -24,6 +24,10 @@ function job(workflow, jobName) {
 test("CI runs the complete workflow regression suite", () => {
   const workflow = read(".github/workflows/ci.yml");
   assert.match(workflow, /node --test scripts\/ci\/\*\.test\.js/);
+  const sourceAndNode = job(workflow, "source-and-node");
+  assert.match(sourceAndNode, /sudo apt-get install -y --no-install-recommends ripgrep xvfb/);
+  assert.match(sourceAndNode, /run: npm ci/);
+  assert.match(sourceAndNode, /run: xvfb-run -a npm run test:issues-ui/);
   const nixBuild = job(workflow, "nix-build");
   assert.match(
     nixBuild,
@@ -63,6 +67,9 @@ test("official Linux validation runs fully on every pull request but not hourly"
   assert.match(workflow, /^  pull_request:\s*\n  push:/m);
   assert.match(workflow, /^      - \.github\/workflows\/upstream-build-app\.yml$/m);
   const signedBaseline = job(workflow, "signed-baseline");
+  assert.match(signedBaseline, /sudo apt-get install -y dpkg-dev gnupg patchelf xvfb/);
+  assert.match(signedBaseline, /run: npm ci/);
+  assert.match(signedBaseline, /CODEX_ELECTRON_ACCEPTANCE: "1"/);
   assert.match(signedBaseline, /architecture: \[amd64, arm64\]/);
   assert.match(
     signedBaseline,

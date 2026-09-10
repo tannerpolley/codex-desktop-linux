@@ -84,6 +84,7 @@ impl RuntimeConfig {
     pub fn default_with_paths(paths: &RuntimePaths) -> Self {
         let mut value = Self {
             workspace_root: paths.cache_dir.clone(),
+            feature_config_path: Some(paths.config_dir.join("features.json")),
             ..Self::default()
         };
         if !value.builder_bundle_root.exists() {
@@ -105,6 +106,9 @@ impl RuntimeConfig {
             value = loaded;
             if value.workspace_root.as_os_str().is_empty() {
                 value.workspace_root = paths.cache_dir.clone();
+            }
+            if value.feature_config_path.is_none() {
+                value.feature_config_path = Some(paths.config_dir.join("features.json"));
             }
         }
         value.validate()?;
@@ -147,6 +151,7 @@ mod tests {
         let config = RuntimeConfig::default_with_paths(&paths);
         assert!(config.repository_url.ends_with("/linux/deb"));
         assert_eq!(config.app_executable_path, PathBuf::from("/opt/codex-desktop/ChatGPT"));
+        assert_eq!(config.feature_config_path, Some(paths.config_dir.join("features.json")));
         Ok(())
     }
 }

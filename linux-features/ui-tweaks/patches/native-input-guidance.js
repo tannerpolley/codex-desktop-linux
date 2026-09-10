@@ -14,6 +14,38 @@ const EXPANDED_GUIDANCE = [
   "Provide all mutually exclusive choices.",
   "Questions to show the user. Include all useful questions",
 ];
+const DEFAULT_GUIDANCE = [
+  "Use the `request_user_input` tool only for optional questions where the answer would materially improve the quality of the work.",
+  "If `request_user_input` returns no answers, continue with best judgment instead of asking again or treating the turn as blocked.",
+  "Never use the `request_user_input` tool for permission requests or permission-related escalations.",
+  "If explicit user input is required for another reason before progress can safely continue, do not use the `request_user_input` tool. Ask the user directly with one concise plain-text question instead. Never write a multiple choice question as a textual assistant message.",
+];
+const DEFAULT_REPLACEMENTS = [
+  [
+    "Use native input for every user-facing question when callable and representable; infer only routine reversible details.",
+    "Use native input for every representable user-facing question; infer only routine reversible details.",
+  ],
+  [
+    "Await material answers; no answer keeps decisions pending, with no authorization or async continuation.",
+    "Wait for material answers; no answer keeps decisions pending, grants no authorization, and forbids async continuation.",
+  ],
+  [
+    "Use native input for representable permission questions; wait for the answer.",
+    "Ask representable permission questions natively; wait for an answer.",
+  ],
+  [
+    "Use native input for complete question sets without count or option limits; if unavailable or unrepresentable, report the limitation without a plain-text substitute.",
+    "Use complete native question sets without count or option limits; report unavailable or unrepresentable input without a plain-text substitute.",
+  ],
+].map((values, index) => values.map((value) => value.padEnd(DEFAULT_GUIDANCE[index].length)));
+const DEFAULT_BLOCKS = [
+  DEFAULT_GUIDANCE.join("\n\n"),
+  DEFAULT_GUIDANCE.join("\\n\\n"),
+];
+const DEFAULT_REPLACEMENT_BLOCKS = [
+  DEFAULT_REPLACEMENTS.map(([literal]) => literal).join("\n\n"),
+  DEFAULT_REPLACEMENTS.map(([, escaped]) => escaped).join("\\n\\n"),
+];
 
 function enabled(context) {
   const defaults = context?.feature?.manifest?.tweaks?.composer?.expandedNativeInputChoices;
@@ -32,30 +64,60 @@ function occurrences(buffer, value) {
   return count;
 }
 
-function patchCodexRequestUserInputGuidance(source) {
-  if (!Buffer.isBuffer(source)) throw new TypeError("Codex executable must be a Buffer");
-  const legacyCounts = LEGACY_GUIDANCE.map((value) => occurrences(source, value));
-  const expandedCounts = EXPANDED_GUIDANCE.map((value) => occurrences(source, value));
-  if (legacyCounts.every((count) => count === 0) && expandedCounts.every((count) => count === 1)) {
-    return source;
+function patchSimpleContract(output, oldValues, replacements) {
+  const oldCounts = oldValues.map((value) => occurrences(output, value));
+  const replacementCounts = replacements.map((value) => occurrences(output, value));
+  if (oldCounts.every((count) => count === 0) && replacementCounts.every((count) => count === 1)) return;
+  if (!oldCounts.every((count) => count === 1) || !replacementCounts.every((count) => count === 0)) {
+    throw new Error("expected one complete native-input guidance contract in the Codex executable");
   }
-  if (!legacyCounts.every((count) => count === 1) || !expandedCounts.every((count) => count === 0)) {
-    throw new Error("expected all legacy guidance strings exactly once in the Codex executable");
+  oldValues.forEach((oldValue, index) => {
+    const replacement = Buffer.from(replacements[index]);
+    const needle = Buffer.from(oldValue);
+    if (needle.length !== replacement.length) throw new Error("native-input replacement must preserve executable size");
+    let offset = 0;
+    while ((offset = output.indexOf(needle, offset)) !== -1) {
+      replacement.copy(output, offset);
+      offset += replacement.length;
+    }
+  });
+}
+
+function patchDefaultContract(output) {
+  const oldCounts = DEFAULT_BLOCKS.map((value) => occurrences(output, value));
+  const replacementCounts = DEFAULT_REPLACEMENT_BLOCKS.map((value) => occurrences(output, value));
+  const oldInstructionCounts = DEFAULT_GUIDANCE.map((value) => occurrences(output, value));
+  const replacementInstructionCounts = DEFAULT_REPLACEMENTS.flat().map((value) => occurrences(output, value));
+  if (oldCounts.every((count) => count === 0) &&
+      replacementCounts.every((count) => count === 1) &&
+      oldInstructionCounts.every((count) => count === 0) &&
+      replacementInstructionCounts.every((count) => count === 1)) return;
+  if (!oldCounts.every((count) => count === 1) ||
+      !replacementCounts.every((count) => count === 0) ||
+      !oldInstructionCounts.every((count) => count === 2) ||
+      !replacementInstructionCounts.every((count) => count === 0)) {
+    throw new Error("expected one literal-newline and one escaped-newline guidance representation");
   }
-  const output = Buffer.from(source);
-  LEGACY_GUIDANCE.forEach((legacy, index) => {
-    const replacement = Buffer.from(EXPANDED_GUIDANCE[index]);
-    const needle = Buffer.from(legacy);
+  DEFAULT_BLOCKS.forEach((block, index) => {
+    const replacement = Buffer.from(DEFAULT_REPLACEMENT_BLOCKS[index]);
+    const needle = Buffer.from(block);
     if (needle.length !== replacement.length) throw new Error("native-input replacement must preserve executable size");
     replacement.copy(output, output.indexOf(needle));
   });
+}
+
+function patchCodexRequestUserInputGuidance(source) {
+  if (!Buffer.isBuffer(source)) throw new TypeError("Codex executable must be a Buffer");
+  const output = Buffer.from(source);
+  patchSimpleContract(output, LEGACY_GUIDANCE, EXPANDED_GUIDANCE);
+  patchDefaultContract(output);
   return output;
 }
 
 function patchExecutable(file) {
   const source = fs.readFileSync(file);
   const output = patchCodexRequestUserInputGuidance(source);
-  if (output === source) return false;
+  if (output.equals(source)) return false;
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.tmp`);
   fs.writeFileSync(temporary, output, { mode: fs.statSync(file).mode });
   fs.renameSync(temporary, file);
@@ -72,6 +134,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  DEFAULT_GUIDANCE,
+  DEFAULT_REPLACEMENTS,
   EXPANDED_GUIDANCE,
   LEGACY_GUIDANCE,
   enabled,
